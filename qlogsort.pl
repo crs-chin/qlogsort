@@ -21,7 +21,6 @@
 use strict;
 use warnings;
 use FindBin;
-use File::Temp;
 use Getopt::Long;
 use Pod::Usage;
 
@@ -89,6 +88,10 @@ files specified
 =item B<-help>
 
 Print this help message
+
+=item B<-man>
+
+Show manual of the executable
 
 =back
 
