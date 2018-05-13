@@ -61,6 +61,17 @@ Specify REGEX as transform regex to the previously specified tag, the
 final log content will be replaced with the capatured value in the
 REGEX
 
+=item B<-subs=REGEX AND PATTERN>
+
+Specify REGEX as substitution regex to the previously specified tag,
+the matching REGEX will be replaced with the next pattern specified by
+-sub, eg. use the follow arguments the replace XX into YYXXYY
+
+    -subs=(XX) -subs=YY$1YY
+
+the "XX" is enclosed in parensis is to be captured by "$1" in the next
+pattern, note, this arguments must come in pairs.
+
 =item B<-handler-list>
 
 List available handlers which can be specified in the -handler
@@ -113,11 +124,13 @@ my %TAG_HANDLER_CONFIG_TABLE = (
     #     "handler"   =>      \&handle_tag, #
     #     "filter"    =>      [],           #
     #     "trans"     =>      [],           #
+    #     "subs"      =>      [],           #
     # },                                    #
     # ".*"       =>      {                  #
     #     "handler"   =>      \&handle_qmi, #
     #     "filter"    =>      [],           #
     #     "trans"     =>      [],           #
+    #     "subs"      =>      [],           #
     # },                                    #
     #########################################
 
@@ -128,6 +141,7 @@ my %TAG_HANDLER_CONFIG_TABLE = (
     #     "handler"     =>      \&handle_qmi,
     #     "filter"      =>      [],
     #     "trans"       =>      [],
+    #     "subs"        =>      [],
     # );
 );
 
@@ -299,10 +313,11 @@ sub queue_block {
 }
 
 sub submit_block {
-    my ($_block, $_filter, $_trans) = @_;
+    my ($_block, $_filter, $_trans, $_subs) = @_;
     my @block   = @$_block;
     my @filter  = @$_filter if (defined $_filter);
     my @trans   = @$_trans if (defined $_trans);
+    my @subs    = @$_subs if (defined $_subs);
 
     my @final_block = ();
 
@@ -344,6 +359,21 @@ sub submit_block {
                 }
             }
 
+            if(! $filtered && @subs > 0) {
+                my $search;
+                my $replace;
+
+                for(my $i = 0; $i < @subs; $i += 2) {
+                    $search = $subs[$i];
+                    $replace = $subs[$i + 1];
+
+                    $replace =~ s/"/\\"/g;
+                    $replace = '"' . $replace . '"';
+
+                    $line->{"log"} =~ s/$search/$replace/gee;
+                }
+            }
+
             if(! $filtered) {
                 push @final_block, $line;
             }
@@ -364,13 +394,14 @@ my %QMI_BLOCKS = (
 );
 
 sub flush_qmi_block {
-    my ($_lines, $_config) = @_;
-    my %config  = %$_config;
-    my $_filter = $config{"filter"};
-    my $_trans  = $config{"trans"};
+    my ($_lines, $config) = @_;
+    my $_filter = $config->{"filter"};
+    my $_trans  = $config->{"trans"};
+    my $_subs   = $config->{"subs"};
 
     my @filter  = @$_filter;
     my @trans   = @$_trans;
+    my @subs    = @$_subs;
     my @lines   = @$_lines;
 
     my $filtered = 0;
@@ -412,9 +443,24 @@ sub flush_qmi_block {
             $_l->{"log"} = $log;
         }
 
+        if(! $filtered && @subs > 0) {
+            my $search;
+            my $replace;
+
+            for(my $i = 0; $i < @subs; $i += 2) {
+                $search = $subs[$i];
+                $replace = $subs[$i + 1];
+
+                $replace =~ s/"/\\"/g;
+                $replace = '"' . $replace . '"';
+
+                $_l->{"log"} =~ s/$search/$replace/gee;
+            }
+        }
+
         if(! $filtered) {
             # TODO: desect QMI here if supported
-            submit_block(\@lines, undef, undef);
+            submit_block(\@lines, undef, undef, undef);
         }
     }
 }
@@ -473,7 +519,10 @@ sub handle_tag {
     my %line = %$_line if (defined $_line);
 
     if(defined $_line) {
-        submit_block([ \%line ], $config->{"filter"}, $config->{"trans"});
+        submit_block([ \%line ],
+                     $config->{"filter"},
+                     $config->{"trans"},
+                     $config->{"subs"});
     }
 }
 
@@ -575,6 +624,23 @@ sub on_opt_trans {
     push @{ $config->{"trans"} }, $value;
 }
 
+sub on_opt_subs {
+    my ($name, $value) = @_;
+
+    if(! $OPT_LAST_TAG) {
+        print STDERR "ERROR:No specifed tag to relate trans \"$value\", abort!\n";
+        exit -1;
+    }
+
+    if(! exists $TAG_HANDLER_CONFIG_TABLE{$OPT_LAST_TAG}) {
+        print STDERR "ERROR:No active tag to relate trans \"$value\", abort!\n";
+        exit -1;
+    }
+
+    my $config = $TAG_HANDLER_CONFIG_TABLE{$OPT_LAST_TAG};
+    push @{ $config->{"subs"} }, $value;
+}
+
 sub on_opt_handler_list {
     print "Supported tag handlers:\n";
     for my $h (keys %TAG_HANDLER_TABLE) {
@@ -664,6 +730,7 @@ sub main {
                "handler=s@" =>  \&on_opt_handler,
                "filter=s@"  =>  \&on_opt_filter,
                "trans=s@"   =>  \&on_opt_trans,
+               "subs=s@"    =>  \&on_opt_subs,
                "handler-list"   =>  \&on_opt_handler_list,
                "out=s"      =>  \&on_opt_out,
                "field=s"    =>  \&on_opt_field,
@@ -678,6 +745,17 @@ sub main {
 
     pod2usage(-verbose => 1) if $OPT_HELP;
     pod2usage(-verbose => 2) if $OPT_MAN;
+
+    foreach my $key (keys %TAG_HANDLER_CONFIG_TABLE) {
+        my $config = $TAG_HANDLER_CONFIG_TABLE{$key};
+        my $_subs = $config->{"subs"};
+        my @subs = @$_subs;
+
+        if(@subs % 2) {
+            print STDERR "ERROR:Substitution arguments must come in pairs, abort!\n";
+            exit -1;
+        }
+    }
 
     if($OPT_SORT) {
         $OUTPUT_SORT = 1;
