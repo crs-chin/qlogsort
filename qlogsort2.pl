@@ -176,15 +176,22 @@ my @OUTPUT_QUEUE    = ();
 
 sub submit_header {
     my ($cmd_line) = @_;
-    my $title = sprintf("%5s%s%-12s %6s%s%-5s %s  %4s     %s\n",
+    my $title = sprintf("%*s%s%*s%*s%s%*s%*s%*s%s%s\n",
+                        $OPT_FIELD{"date"} ? 5 : 0,
                         $OPT_FIELD{"date"} ? "DATE" : "",
                         $OPT_FIELD{"date"} && $OPT_FIELD{"time"} ? "/" : "",
+                        $OPT_FIELD{"time"} ? -12 : 0,
                         $OPT_FIELD{"time"} ? "TIME" : "",
+                        $OPT_FIELD{"pid"} ? 7 : 0,
                         $OPT_FIELD{"pid"} ? "PID" : "",
                         $OPT_FIELD{"pid"} && $OPT_FIELD{"tid"} ? "/" : "",
+                        $OPT_FIELD{"tid"} ? -5 : 0,
                         $OPT_FIELD{"tid"} ? "TID" : "",
+                        $OPT_FIELD{"level"} ? 4 : 0,
                         $OPT_FIELD{"level"} ? "LVL" : "",
+                        $OPT_FIELD{"tag"} ? 6 : 0,
                         $OPT_FIELD{"tag"} ? "TAG" : "",
+                        $OPT_FIELD{"message"} ? "    " : "",
                         $OPT_FIELD{"message"} ? "MESSAGE" : "");
 
     print $OUTPUT_STREAM "=======================FILTERED WITH CMD LINE=======================\n";
@@ -196,12 +203,14 @@ sub submit_header {
 
 sub submit_line {
     my ($line) = @_;
-    my $format = sprintf("%s%s%s %6s%s%-6s %.1s %s %s\n",
+    my $format = sprintf("%s%s%s %*s%s%*s %.1s %s %s\n",
                          $OPT_FIELD{"date"} ? $line->{"date"} : "",
                          $OPT_FIELD{"date"} && $OPT_FIELD{"time"} ? "/" : "",
                          $OPT_FIELD{"time"} ? $line->{"time"} : "",
+                         $OPT_FIELD{"pid"} ? 6 : 0,
                          $OPT_FIELD{"pid"} ? $line->{"pid"} : "",
                          $OPT_FIELD{"pid"} && $OPT_FIELD{"tid"} ? "/" : "",
+                         $OPT_FIELD{"tid"} ? -6 : 0,
                          $OPT_FIELD{"tid"} ? $line->{"tid"} : "",
                          $OPT_FIELD{"level"} ? $line->{"level"} : "",
                          $OPT_FIELD{"tag"} ? $line->{"tag"} : "",
