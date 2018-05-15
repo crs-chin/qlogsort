@@ -630,19 +630,22 @@ sub dissect_qmi {
         close $DISSECT_INPUT_FILE_HANDLE;
         close $DISSECT_OUTPUT_FILE_HANDLE;
 
-        if(! $QCAT_APP->Process($DISSECT_INPUT_FILE_NAME, $DISSECT_OUTPUT_FILE_NAME, 0, 1)) {
-            my $err = $QCAT_APP->LastError();
-            append_dissected_qmi_line($lines, $err);
-        }
+        do{
+            if(! $QCAT_APP->Process($DISSECT_INPUT_FILE_NAME, $DISSECT_OUTPUT_FILE_NAME, 0, 1)) {
+                my $err = $QCAT_APP->LastError();
+                append_dissected_qmi_line($lines, $err);
+                last;
+            }
 
-        if(! open($DISSECT_OUTPUT_FILE_HANDLE, '<', $DISSECT_OUTPUT_FILE_NAME)) {
-            append_dissected_qmi_line($lines, "DISSECT_QMI:Failed to open file to read qmi!");
-            return;
-        }
+            if(! open($DISSECT_OUTPUT_FILE_HANDLE, '<', $DISSECT_OUTPUT_FILE_NAME)) {
+                append_dissected_qmi_line($lines, "DISSECT_QMI:Failed to open file to read qmi!");
+                last;
+            }
 
-        append_dissected_qmi($lines, $DISSECT_OUTPUT_FILE_HANDLE);
+            append_dissected_qmi($lines, $DISSECT_OUTPUT_FILE_HANDLE);
 
-        close $DISSECT_OUTPUT_FILE_HANDLE;
+            close $DISSECT_OUTPUT_FILE_HANDLE;
+        }while(0);
 
         unlink $DISSECT_INPUT_FILE_NAME;
         unlink $DISSECT_OUTPUT_FILE_NAME;
