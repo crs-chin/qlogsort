@@ -554,7 +554,6 @@ sub dissect_qmi {
         my $packet;
 
         if(! $msg_len || ! $srv_id || ! $msg_id || ! $tx_id || ! $msg_type) {
-            print "QXX:1:",$lines->[0]->{"log"},"\n";
             return;
         }
 
@@ -585,7 +584,6 @@ sub dissect_qmi {
 
         if($msg_len != length($msg_body) / 2) {
             append_dissected_qmi_line($lines, "DISSECT_QMI:Bad qmi, length mis-match!");
-            print "QXX:2:$msg_len:",length($msg_body) / 2,":\"$msg_body\"\n";
             return;
         }
 
