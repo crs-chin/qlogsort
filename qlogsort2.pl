@@ -539,7 +539,7 @@ sub dissect_qmi {
 
     use integer;
     # don't dissect if there's no qmi body
-    if(@$lines > 0) {
+    if(@$lines > 1) {
         my $ver         = 2;    # currently, only version 2 supported
         my $ctrl_flag   = 0;
         my $major       = 1;
@@ -549,7 +549,7 @@ sub dissect_qmi {
         my ($msg_len, $srv_id, $msg_id, $tx_id, $msg_type) = (
             $lines->[0]->{"log"}
             =~
-            /.*QMI_Msg Len:\s*\[(\d+)\].*\s*Serv_ID:\s*\[\w+\(0x([0-9a-fA-F]+)\)\].*\s*Msg_ID:\s*\[\w+\(0x([0-9a-fA-F]+)\)\].*Trans_ID:\s*\[(\d+)\]\s*\[(Request|Response|Indication)\]/
+            /.*QMI_Msg Len:\s*\[(\d+)\].*\s*Serv_ID:\s*\[\w+\(0x([0-9a-fA-F]+)\)\].*\s*Msg_ID:\s*\[[\w<>]+\(0x([0-9a-fA-F]+)\)\].*Trans_ID:\s*\[(\d+)\]\s*\[(Request|Response|Indication)\]/
             );
         my $msg_body;
         my $total_len;
@@ -750,7 +750,7 @@ sub handle_qmi {
     }
 
     # new qmi msg
-    if($line{"log"} !~ /^\d+.*/) {
+    if($line{"log"} !~ /^[\s0-9A-Fa-f]+$/) {
         if (exists $QMI_BLOCKS{$line{"tid"}}) {
             flush_qmi_block($QMI_BLOCKS{$line{"tid"}}, $_config);
             delete $QMI_BLOCKS{$line{"tid"}};
