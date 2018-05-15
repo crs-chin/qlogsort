@@ -118,6 +118,11 @@ resource if input files are large enough
 
 Sort in ascend(default) order or not
 
+=item B<-no-header>
+
+Don't show commands information in the header indicating how the
+contents are filtered
+
 =item B<-version>
 
 Show version of the program
@@ -208,6 +213,7 @@ my @INPUT_STREAMS   = (
 );
 my $OUTPUT_STREAM;
 my $OUTPUT_SORT     = 0;
+my $OUTPUT_NO_HEADER= 0;
 my @OUTPUT_QUEUE    = ();
 
 sub submit_header {
@@ -230,9 +236,12 @@ sub submit_header {
                         $OPT_FIELD{"message"} ? "    " : "",
                         $OPT_FIELD{"message"} ? "MESSAGE" : "");
 
-    print $OUTPUT_STREAM "=======================FILTERED WITH CMD LINE=======================\n";
-    print $OUTPUT_STREAM "$cmd_line\n";
-    print $OUTPUT_STREAM "====================================================================\n";
+    if($OUTPUT_NO_HEADER) {
+        print $OUTPUT_STREAM "=======================FILTERED WITH CMD LINE=======================\n";
+        print $OUTPUT_STREAM "$cmd_line\n";
+        print $OUTPUT_STREAM "====================================================================\n";
+    }
+
     print $OUTPUT_STREAM "$title";
     print $OUTPUT_STREAM "--------------------------------------------------------------------\n";
 }
@@ -984,6 +993,7 @@ sub main {
     my $OPT_CONDENSE_QMI= 0;
     my $OPT_SORT        = 0;
     my $OPT_ASCEND      = 1;
+    my $OPT_NO_HEADER   = 0;
     my $OPT_HELP        = "";
     my $OPT_MAN         = "";
     my $CMD_LINE        = $FindBin::Script;
@@ -1013,6 +1023,7 @@ sub main {
                "condense-qmi=i" =>  \$OPT_CONDENSE_QMI,
                "sort!"          =>  \$OPT_SORT,
                "ascend"         =>  \$OPT_ASCEND,
+               "no-header"      =>  \$OPT_NO_HEADER,
                "help"           =>  \$OPT_HELP,
                "man"            =>  \$OPT_MAN)
         or

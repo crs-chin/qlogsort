@@ -33,23 +33,21 @@ my $COMMAND_RES_OK  = "##QLOGSOR2_COMMAND_RESULT_OK_QLOGSOR2##";
 my $COMMAND_RES_FAIL= "##QLOGSOR2_COMMAND_RESULT_FAIL_QLOGSOR2##";
 
 sub main {
-    my $RET = 0;
-    my $CLIENT = IO::Socket::UNIX->new(Type => SOCK_STREAM(),
-                                       Peer => $SOCK_PATH);
-
-    if(! defined $ARGV[0]) {
-        print "ERROR";
-        return -1;
-    }
+    my @CMD_ARGUMENTS   = (
+        "-tag", ".*", "-handler", "qmi", "-no-header", "-field", "all", "-dissect-qmi", "-condense-qmi", "2",
+        );
+    my $RET             = 0;
+    my $CLIENT          = IO::Socket::UNIX->new(Type => SOCK_STREAM(),
+                                                Peer => $SOCK_PATH);
 
     if(! $CLIENT) {
         return -1;
     }
 
     # send arguments
-    foreach my $argv (@ARGV) {
-        $argv .= "\n";
-        $CLIENT->print($argv);
+    foreach my $arg (@CMD_ARGUMENTS) {
+        $CLIENT->print($arg);
+        $CLIENT->print("\n");
     }
     $CLIENT->print($COMMAND_DONE);
     $CLIENT->print("\n");

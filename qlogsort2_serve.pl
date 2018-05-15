@@ -21,6 +21,7 @@
 use strict;
 use warnings;
 use FindBin;
+use File::Temp qw/ tempfile /;
 use IO::Socket::UNIX;
 use Getopt::Long;
 use Pod::Usage;
@@ -60,28 +61,66 @@ my $VERSION         = 'version 1.0 (c) crs.chin@gmain.com';
 my $QLOGSORT2_PATH  = "/home/chin/bin/qlogsort2.pl";
 my $SOCK_PATH       = "/tmp/qlogsort2_serve.sock";
 
-my $COMMAND_DONE    = "##SUBMIT_COMMAND##";
+my $COMMAND_DONE    = "##QLOGSOR2_COMMAND_ARGUMENTS_DONE_QLOGSOR2##";
+my $CONTENT_DONE    = "##QLOGSOR2_FILE_CONTENTS_DONE_QLOGSOR2##";
+my $COMMAND_RES_OK  = "##QLOGSOR2_COMMAND_RESULT_OK_QLOGSOR2##";
+my $COMMAND_RES_FAIL= "##QLOGSOR2_COMMAND_RESULT_FAIL_QLOGSOR2##";
 
 sub handle_session {
     my ($conn) = @_;
-    my @cmd_to_exec = ( $QLOGSORT2_PATH );
-    my $ret;
+    my @cmd_to_exec         = ( $QLOGSORT2_PATH );
+    my ($fd_in, $file_in)   = tempfile();
+    my ($fd_out, $file_out) = tempfile();
+    my $cmd_recved          = 0;
+    my $ret                 = 0;
+
+    close $fd_out;
 
     print "MSG: NEW CONNECTION\n";
     while(<$conn>) {
         chomp;
 
-        if($_ eq $COMMAND_DONE) {
-            print "MSG: EXEC: \"@cmd_to_exec\"\n";
-            $ret = system(@cmd_to_exec);
+        if(! $cmd_recved) {
+            if($_ eq $COMMAND_DONE) {
+                $cmd_recved = 1;
+            } else {
+                push @cmd_to_exec, $_;
+            }
+        } else {
+            if($_ eq $CONTENT_DONE) {
+                last
+            }
 
-            $conn->print($ret == 0 ? "OK\n" : "FAIL\n");
-            $conn->flush;
-            last;
+            print $fd_in $_,"\n";
+        }
+    }
+
+    push @cmd_to_exec, $file_in;
+    push @cmd_to_exec, "-out";
+    push @cmd_to_exec, $file_out;
+
+    print "MSG: EXEC: \"@cmd_to_exec\"\n";
+    $ret = system(@cmd_to_exec);
+
+    $conn->print($ret == 0 ? $COMMAND_RES_OK : $COMMAND_RES_FAIL);
+    $conn->print("\n");
+
+    if($ret == 0) {
+        if(! open($fd_out, '<', $file_out)) {
+            $conn->print("ERROR:unexpected empty dissection output!\n");
+            close $conn;
+            return;
         }
 
-        push @cmd_to_exec, $_;
+        while(<$fd_out>) {
+            $conn->print($_);
+        }
+        $conn->flush;
+        close $fd_out;
     }
+
+    unlink $file_in;
+    unlink $file_out;
 
     close $conn;
 }
