@@ -36,7 +36,7 @@ use QCATDBus;
 
 =head1 NAME
 
-qlogsort.pl - Sort and filter Android log more decently for analysis
+qlogsort2.pl - Sort and filter Android log more decently for analysis
 
 =head1 SYNOPSIS
 
@@ -56,7 +56,7 @@ available
 =item B<-handler=HANDLER>
 
 Specify the handler for the previously specified tag, default handler
-will be used if not specifed
+will be used if not specified
 
 =item B<-filter=REGEX>
 
@@ -66,7 +66,7 @@ multiple times multiple REFEX matching required
 =item B<-trans=REGEX>
 
 Specify REGEX as transform regex to the previously specified tag, the
-final log content will be replaced with the capatured value in the
+final log content will be replaced with the captured value in the
 REGEX
 
 =item B<-subs=REGEX AND PATTERN>
@@ -77,7 +77,7 @@ the matching REGEX will be replaced with the next pattern specified by
 
     -subs=(XX) -subs=YY$1YY
 
-the "XX" is enclosed in parensis is to be captured by "$1" in the next
+the "XX" is enclosed in parenthesis is to be captured by "$1" in the next
 pattern, note, this arguments must come in pairs.
 
 =item B<-handler-list>
@@ -92,15 +92,15 @@ specified
 
 =item B<-field>
 
-Speficy the field list to print in the final output file
+Specify the field list to print in the final output file
 
 =item B<-field-list>
 
 List available field, use "all" to enable all fields output
 
-=item B<-desect-qmi>
+=item B<-dessect-qmi>
 
-Desect QMI messages if available, using this options must have
+Dessect QMI messages if available, using this options must have
 Qualcomm QCAT application installed and available to this program
 
 =item B<-condense-qmi=[0|1|2]>
@@ -111,7 +111,7 @@ information from the output of QCAT
 =item B<-sort>
 
 Sort chronologically in time stamp order if there are multiple input
-files specified, Note, this could comsume a lot of memory and and cpu
+files specified, Note, this could consume a lot of memory and and cpu
 resource if input files are large enough
 
 =item B<-ascend>
@@ -449,21 +449,21 @@ my %QMI_BLOCKS = (
 
 my $QCAT_APP;
 my $CONDENSE_QMI = 0;
-my $DESECT_INPUT_FILE_HANDLE;
-my $DESECT_INPUT_FILE_NAME;
-my $DESECT_OUTPUT_FILE_HANDLE;
-my $DESECT_OUTPUT_FILE_NAME;
+my $DESSECT_INPUT_FILE_HANDLE;
+my $DESSECT_INPUT_FILE_NAME;
+my $DESSECT_OUTPUT_FILE_HANDLE;
+my $DESSECT_OUTPUT_FILE_NAME;
 
 sub qcat_init {
     return if $QCAT_APP;
 
     $QCAT_APP = newQCAT6Application();
     if(! $QCAT_APP) {
-        print STDERR "ERROR: Unable to initialize QCAT, disabling QMI desection!\n";
+        print STDERR "ERROR: Unable to initialize QCAT, disabling QMI dessection!\n";
     }
 }
 
-sub append_desected_qmi_line {
+sub append_dessected_qmi_line {
     my ($lines, $message) = @_;
 
     push @$lines, {
@@ -472,7 +472,7 @@ sub append_desected_qmi_line {
     };
 }
 
-# Desected QMI looks like the following, append only efective lines to
+# Dessected QMI looks like the following, append only efective lines to
 # the final text.
 # 
 # %MOBILE PARSED MESSAGE FILE
@@ -495,7 +495,7 @@ sub append_desected_qmi_line {
 #       nas_get_sys_info {
 #          nas_get_sys_info_respTlvs[0] {
 
-sub append_desected_qmi {
+sub append_dessected_qmi {
     my ($lines, $fd) = @_;
 
     if(! $CONDENSE_QMI) {
@@ -507,7 +507,7 @@ sub append_desected_qmi {
 
         while(<$fd>) {
             chomp;
-            append_desected_qmi_line($lines, $_);
+            append_dessected_qmi_line($lines, $_);
         }
         return;
     }
@@ -524,19 +524,19 @@ sub append_desected_qmi {
             if($CONDENSE_QMI != 2 ||
                $_ !~ /^\s*Type\s*=|^\s*Length\s*=|^\s*resp\s*\{$|^\s*\}$/) {
                 $_ =~ s/\s*\{|_respTlvs\[\d*\]\s*\{|_reqTlvs\[\d*\]\s*\{|_indTlvs\[\d*\]\s*\{//g;
-                append_desected_qmi_line($lines, $_);
+                append_dessected_qmi_line($lines, $_);
             }
         }
     }while(<$fd>);
 }
 
-sub desect_qmi {
+sub dessect_qmi {
     my ($lines) = @_;
     my $header = $lines->[0];
     my $tmpfs = "/dev/shm";
 
     use integer;
-    # don't desect if there's no qmi body
+    # don't dessect if there's no qmi body
     if(@$lines > 0) {
         my $ver         = 2;    # currently, only version 2 supported
         my $ctrl_flag   = 0;
@@ -568,7 +568,7 @@ sub desect_qmi {
         } elsif ($msg_type eq "Indication") {
             $ctrl_flag = 2;
         } else {
-            append_desected_qmi_line($lines, "DESECT_QMI:Unrecognized message type \"$msg_type\"");
+            append_dessected_qmi_line($lines, "DESSECT_QMI:Unrecognized message type \"$msg_type\"");
             return;
         }
 
@@ -584,7 +584,7 @@ sub desect_qmi {
         }
 
         if($msg_len != length($msg_body) / 2) {
-            append_desected_qmi_line($lines, "DESECT_QMI:Bad qmi, length mis-match!");
+            append_dessected_qmi_line($lines, "DESSECT_QMI:Bad qmi, length mis-match!");
             print "QXX:2:$msg_len:",length($msg_body) / 2,":\"$msg_body\"\n";
             return;
         }
@@ -608,44 +608,44 @@ sub desect_qmi {
         $packet .= pack 'H*',$msg_body;
 
         if( -d $tmpfs) {
-            ($DESECT_INPUT_FILE_HANDLE, $DESECT_INPUT_FILE_NAME) = tempfile(DIR => $tmpfs, SUFFIX => ".dlf");
-            ($DESECT_OUTPUT_FILE_HANDLE, $DESECT_OUTPUT_FILE_NAME) = tempfile(DIR => $tmpfs, SUFFIX => ".txt");
+            ($DESSECT_INPUT_FILE_HANDLE, $DESSECT_INPUT_FILE_NAME) = tempfile(DIR => $tmpfs, SUFFIX => ".dlf");
+            ($DESSECT_OUTPUT_FILE_HANDLE, $DESSECT_OUTPUT_FILE_NAME) = tempfile(DIR => $tmpfs, SUFFIX => ".txt");
         } else {
-            ($DESECT_INPUT_FILE_HANDLE, $DESECT_INPUT_FILE_NAME) = tempfile(SUFFIX => ".dlf");
-            ($DESECT_OUTPUT_FILE_HANDLE, $DESECT_OUTPUT_FILE_NAME) = tempfile(SUFFIX => ".txt");
+            ($DESSECT_INPUT_FILE_HANDLE, $DESSECT_INPUT_FILE_NAME) = tempfile(SUFFIX => ".dlf");
+            ($DESSECT_OUTPUT_FILE_HANDLE, $DESSECT_OUTPUT_FILE_NAME) = tempfile(SUFFIX => ".txt");
         }
 
-        if(! $DESECT_INPUT_FILE_HANDLE ||
-           ! $DESECT_INPUT_FILE_NAME   ||
-           ! $DESECT_OUTPUT_FILE_HANDLE||
-           ! $DESECT_OUTPUT_FILE_NAME) {
-            append_desected_qmi_line($lines, "DESECT_QMI:Unable to initialize temp file to desect qmi!");
+        if(! $DESSECT_INPUT_FILE_HANDLE ||
+           ! $DESSECT_INPUT_FILE_NAME   ||
+           ! $DESSECT_OUTPUT_FILE_HANDLE||
+           ! $DESSECT_OUTPUT_FILE_NAME) {
+            append_dessected_qmi_line($lines, "DESSECT_QMI:Unable to initialize temp file to dessect qmi!");
             return;
         }
 
-        binmode $DESECT_INPUT_FILE_HANDLE;
-        print $DESECT_INPUT_FILE_HANDLE $packet;
+        binmode $DESSECT_INPUT_FILE_HANDLE;
+        print $DESSECT_INPUT_FILE_HANDLE $packet;
 
         # need to close first before qcat open it
-        close $DESECT_INPUT_FILE_HANDLE;
-        close $DESECT_OUTPUT_FILE_HANDLE;
+        close $DESSECT_INPUT_FILE_HANDLE;
+        close $DESSECT_OUTPUT_FILE_HANDLE;
 
-        if(! $QCAT_APP->Process($DESECT_INPUT_FILE_NAME, $DESECT_OUTPUT_FILE_NAME, 0, 1)) {
+        if(! $QCAT_APP->Process($DESSECT_INPUT_FILE_NAME, $DESSECT_OUTPUT_FILE_NAME, 0, 1)) {
             my $err = $QCAT_APP->LastError();
-            append_desected_qmi_line($lines, $err);
+            append_dessected_qmi_line($lines, $err);
         }
 
-        if(! open($DESECT_OUTPUT_FILE_HANDLE, '<', $DESECT_OUTPUT_FILE_NAME)) {
-            append_desected_qmi_line($lines, "DESECT_QMI:Failed to open file to read qmi!");
+        if(! open($DESSECT_OUTPUT_FILE_HANDLE, '<', $DESSECT_OUTPUT_FILE_NAME)) {
+            append_dessected_qmi_line($lines, "DESSECT_QMI:Failed to open file to read qmi!");
             return;
         }
 
-        append_desected_qmi($lines, $DESECT_OUTPUT_FILE_HANDLE);
+        append_dessected_qmi($lines, $DESSECT_OUTPUT_FILE_HANDLE);
 
-        close $DESECT_OUTPUT_FILE_HANDLE;
+        close $DESSECT_OUTPUT_FILE_HANDLE;
 
-        unlink $DESECT_INPUT_FILE_NAME;
-        unlink $DESECT_OUTPUT_FILE_NAME;
+        unlink $DESSECT_INPUT_FILE_NAME;
+        unlink $DESSECT_OUTPUT_FILE_NAME;
     }
 }
 
@@ -676,6 +676,10 @@ sub flush_qmi_block {
                     last;
                 }
             }
+        }
+
+        if(! $filtered && $QCAT_APP) {
+            dessect_qmi(\@lines);
         }
 
         # qmi has non-default trans handling
@@ -715,9 +719,6 @@ sub flush_qmi_block {
         }
 
         if(! $filtered) {
-            if($QCAT_APP) {
-                desect_qmi(\@lines);
-            }
             submit_block(\@lines, undef, undef, undef);
         }
     }
@@ -786,7 +787,7 @@ sub handle_tag {
 
 
 # sample: 05-04 14:09:48.510   888  2225 D TAG  : log content blah blah...
-sub log_desect {
+sub log_dessect {
     my ($_date, $_time, $_pid, $_tid, $_level, $_tag, $_log) = (
             pop =~ /^\s*(\d+-\d+)\s+(\d+:\d+:\d+\.\d+)\s+(\d+)\s+(\d+)\s+([VDIEWF])\s+([^:]+)\s*:\s*(.*)$/
         );
@@ -976,7 +977,7 @@ sub on_opt_version {
 }
 
 sub main {
-    my $OPT_DESECT_QMI  = 0;
+    my $OPT_DESSECT_QMI  = 0;
     my $OPT_CONDENSE_QMI= 0;
     my $OPT_SORT        = 0;
     my $OPT_ASCEND      = 1;
@@ -1005,7 +1006,7 @@ sub main {
                "field-list"     =>  \&on_opt_field_list,
                "<>"             =>  \&on_opt_args,
                "version"        =>  \&on_opt_version,
-               "desect-qmi"     =>  \$OPT_DESECT_QMI,
+               "dessect-qmi"    =>  \$OPT_DESSECT_QMI,
                "condense-qmi=i" =>  \$OPT_CONDENSE_QMI,
                "sort!"          =>  \$OPT_SORT,
                "ascend"         =>  \$OPT_ASCEND,
@@ -1028,7 +1029,7 @@ sub main {
         }
     }
 
-    if($OPT_DESECT_QMI) {
+    if($OPT_DESSECT_QMI) {
         qcat_init();
     }
 
@@ -1066,7 +1067,7 @@ sub main {
         while(<$fd>) {
             last if(! $_);
 
-            %log = log_desect($_);
+            %log = log_dessect($_);
             next if (!  $log{"tag"});
 
             for my $key (keys %TAG_HANDLER_CONFIG_TABLE) {
