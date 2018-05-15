@@ -40,7 +40,7 @@ qlogsort2.pl - Sort and filter Android log more decently for analysis
 
 =head1 SYNOPSIS
 
-qlogsort.pl - [OPTIONS] [ANDROID LOG FILE LIST]
+qlogsort2.pl - [OPTIONS] [ANDROID LOG FILE LIST]
 
 =head1 OPTIONS
 
@@ -138,7 +138,7 @@ B<This program> will read input file(s) and parse as Android logs, and
  sort, filter in a friendly way for analyzing, eliminate junk or
  unnecessary logs from interfering.
 
-=head1 NDROID LOG FILE LIST
+=head1 ANDROID LOG FILE LIST
 
 File list of standard Android logs, read from stdin of no file
 specified
