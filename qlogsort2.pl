@@ -118,6 +118,10 @@ resource if input files are large enough
 
 Sort in ascend(default) order or not
 
+=item B<-version>
+
+Show version of the program
+
 =item B<-help>
 
 Print this help message
@@ -145,6 +149,8 @@ The REGEX is standard perl regex, eg: '/(\d+)/' to match and capture
 decimal digits
 
 =cut
+
+my $VERSION = 'version 1.0 (c) crs.chin@gmain.com';
 
 # configured tag handlers table
 my %TAG_HANDLER_CONFIG_TABLE = (
@@ -962,6 +968,13 @@ sub on_opt_args {
     };
 }
 
+sub on_opt_version {
+    my ($name, $value) = @_;
+
+    print "$FindBin::Script $VERSION\n";
+    exit 0;
+}
+
 sub main {
     my $OPT_DESECT_QMI  = 0;
     my $OPT_CONDENSE_QMI= 0;
@@ -991,6 +1004,7 @@ sub main {
                "field=s"        =>  \&on_opt_field,
                "field-list"     =>  \&on_opt_field_list,
                "<>"             =>  \&on_opt_args,
+               "version"        =>  \&on_opt_version,
                "desect-qmi"     =>  \$OPT_DESECT_QMI,
                "condense-qmi=i" =>  \$OPT_CONDENSE_QMI,
                "sort!"          =>  \$OPT_SORT,
