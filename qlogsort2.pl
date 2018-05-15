@@ -543,7 +543,6 @@ sub append_dissected_qmi {
 
 sub dissect_qmi {
     my ($lines) = @_;
-    my $header = $lines->[0];
     my $tmpfs = "/dev/shm";
 
     use integer;
