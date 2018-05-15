@@ -18,11 +18,19 @@
 # Boston, MA 02111-1307, USA.
 #
 
+BEGIN {
+    push @INC, "/Applications/QCAT/QCAT/Script";
+}
+
 use strict;
 use warnings;
 use FindBin;
+use File::Temp qw/ tempfile /;
 use Getopt::Long;
 use Pod::Usage;
+
+use QCATDBus;
+
 
 =pod
 
@@ -82,11 +90,33 @@ argument
 Specify the file write the final filtered log, STDOUT used if not
 specified
 
+=item B<-field>
+
+Speficy the field list to print in the final output file
+
+=item B<-field-list>
+
+List available field, use "all" to enable all fields output
+
+=item B<-desect-qmi>
+
+Desect QMI messages if available, using this options must have
+Qualcomm QCAT application installed and available to this program
+
+=item B<-condense-qmi=[0|1|2]>
+
+Condense qmi message from QCAT, this options removes many redundant
+information from the output of QCAT
+
 =item B<-sort>
 
 Sort chronologically in time stamp order if there are multiple input
 files specified, Note, this could comsume a lot of memory and and cpu
 resource if input files are large enough
+
+=item B<-ascend>
+
+Sort in ascend(default) order or not
 
 =item B<-help>
 
@@ -203,19 +233,28 @@ sub submit_header {
 
 sub submit_line {
     my ($line) = @_;
-    my $format = sprintf("%s%s%s %*s%s%*s %.1s %s %s\n",
-                         $OPT_FIELD{"date"} ? $line->{"date"} : "",
-                         $OPT_FIELD{"date"} && $OPT_FIELD{"time"} ? "/" : "",
-                         $OPT_FIELD{"time"} ? $line->{"time"} : "",
-                         $OPT_FIELD{"pid"} ? 6 : 0,
-                         $OPT_FIELD{"pid"} ? $line->{"pid"} : "",
-                         $OPT_FIELD{"pid"} && $OPT_FIELD{"tid"} ? "/" : "",
-                         $OPT_FIELD{"tid"} ? -6 : 0,
-                         $OPT_FIELD{"tid"} ? $line->{"tid"} : "",
-                         $OPT_FIELD{"level"} ? $line->{"level"} : "",
-                         $OPT_FIELD{"tag"} ? $line->{"tag"} : "",
-                         $OPT_FIELD{"message"} ? $line->{"log"} : "");
-    
+    my $format;
+
+    if($line->{"type"} eq "log") {
+        $format = sprintf("%s%s%s %*s%s%*s %.1s %s %s\n",
+                          $OPT_FIELD{"date"} ? $line->{"date"} : "",
+                          $OPT_FIELD{"date"} && $OPT_FIELD{"time"} ? "/" : "",
+                          $OPT_FIELD{"time"} ? $line->{"time"} : "",
+                          $OPT_FIELD{"pid"} ? 6 : 0,
+                          $OPT_FIELD{"pid"} ? $line->{"pid"} : "",
+                          $OPT_FIELD{"pid"} && $OPT_FIELD{"tid"} ? "/" : "",
+                          $OPT_FIELD{"tid"} ? -6 : 0,
+                          $OPT_FIELD{"tid"} ? $line->{"tid"} : "",
+                          $OPT_FIELD{"level"} ? $line->{"level"} : "",
+                          $OPT_FIELD{"tag"} ? $line->{"tag"} : "",
+                          $OPT_FIELD{"message"} ? $line->{"log"} : "");
+    } elsif($line->{"type"} eq "qmi") {
+        $format = sprintf("|          %s\n",
+                          $OPT_FIELD{"message"} ? $line->{"log"} : "");
+    } else {
+        return;
+    }
+
     print $OUTPUT_STREAM  "$format";
 }
 
@@ -402,6 +441,208 @@ my %QMI_BLOCKS = (
     # ...
 );
 
+my $QCAT_APP;
+my $CONDENSE_QMI = 0;
+my $DESECT_INPUT_FILE_HANDLE;
+my $DESECT_INPUT_FILE_NAME;
+my $DESECT_OUTPUT_FILE_HANDLE;
+my $DESECT_OUTPUT_FILE_NAME;
+
+sub qcat_init {
+    return if $QCAT_APP;
+
+    $QCAT_APP = newQCAT6Application();
+    if(! $QCAT_APP) {
+        print STDERR "ERROR: Unable to initialize QCAT, disabling QMI desection!\n";
+    }
+}
+
+sub append_desected_qmi_line {
+    my ($lines, $message) = @_;
+
+    push @$lines, {
+        type    =>  "qmi",
+        log     =>  $message,
+    };
+}
+
+# Desected QMI looks like the following, append only efective lines to
+# the final text.
+# 
+# %MOBILE PARSED MESSAGE FILE
+# %QCAT VERSION   : QCAT 06.30.50
+# %SILK VERSION   : SILK_9.82
+# %LOG FILE NAME  : /home/chin/tmp/111/qmi.dlf
+
+# 1980 Jan  6  00:00:00.000  [00]  0x1544  QMI_MCS_QCSI_PKT
+# packetVersion = 2
+# MsgType = Response
+# Counter = 2418
+# ServiceId = 3
+# MajorRev = 1
+# MinorRev = 146
+# ConHandle = 0x00000000
+# MsgId = 0x0000004D
+# QmiLength = 142
+# Service_NAS {
+#    ServiceNASV1 {
+#       nas_get_sys_info {
+#          nas_get_sys_info_respTlvs[0] {
+
+sub append_desected_qmi {
+    my ($lines, $fd) = @_;
+
+    if(! $CONDENSE_QMI) {
+        while(<$fd>) {
+            if($_ =~ /0x1544\s*QMI_MCS_QCSI_PKT/) {
+                last;
+            }
+        }
+
+        while(<$fd>) {
+            chomp;
+            append_desected_qmi_line($lines, $_);
+        }
+        return;
+    }
+
+    while(<$fd>) {
+        if($_ =~ /^.*{$/) {
+            last;
+        }
+    }
+
+    do {
+        chomp;
+        if($_ !~ /^\s*$/) {
+            if($CONDENSE_QMI != 2 ||
+               $_ !~ /^\s*Type\s*=|^\s*Length\s*=|^\s*resp\s*\{$|^\s*\}$/) {
+                $_ =~ s/\s*\{|_respTlvs\[\d*\]\s*\{|_reqTlvs\[\d*\]\s*\{|_indTlvs\[\d*\]\s*\{//g;
+                append_desected_qmi_line($lines, $_);
+            }
+        }
+    }while(<$fd>);
+}
+
+sub desect_qmi {
+    my ($lines) = @_;
+    my $header = $lines->[0];
+    my $tmpfs = "/dev/shm";
+
+    use integer;
+    # don't desect if there's no qmi body
+    if(@$lines > 0) {
+        my $ver         = 2;    # currently, only version 2 supported
+        my $ctrl_flag   = 0;
+        my $major       = 1;
+        my $minor       = 146;
+        my $con_handle  = 0;
+        my $dummy       = "44150000000000000000";
+        my ($msg_len, $srv_id, $msg_id, $tx_id, $msg_type) = (
+            $lines->[0]->{"log"}
+            =~
+            /.*QMI_Msg Len:\s*\[(\d+)\].*\s*Serv_ID:\s*\[\w+\(0x([0-9a-fA-F]+)\)\].*\s*Msg_ID:\s*\[\w+\(0x([0-9a-fA-F]+)\)\].*Trans_ID:\s*\[(\d+)\]\s*\[(Request|Response|Indication)\]/
+            );
+        my $msg_body;
+        my $total_len;
+        my $packet;
+
+        if(! $msg_len || ! $srv_id || ! $msg_id || ! $tx_id || ! $msg_type) {
+            print "QXX:1:",$lines->[0]->{"log"},"\n";
+            return;
+        }
+
+        $srv_id = hex($srv_id);
+        $msg_id = hex($msg_id);
+
+        if($msg_type eq "Request") {
+            $ctrl_flag = 0;
+        } elsif ($msg_type eq "Response" ) {
+            $ctrl_flag = 1;
+        } elsif ($msg_type eq "Indication") {
+            $ctrl_flag = 2;
+        } else {
+            append_desected_qmi_line($lines, "DESECT_QMI:Unrecognized message type \"$msg_type\"");
+            return;
+        }
+
+        if($srv_id == 9) {       # change major to 2 for service voice(0x9)
+            $major = 2;
+        }
+
+        for(my $i = 1; $i < @$lines; ++$i) {
+            my $line = $lines->[$i]->{"log"};
+
+            $line =~ s/\s+//g;
+            $msg_body .= $line;
+        }
+
+        if($msg_len != length($msg_body) / 2) {
+            append_desected_qmi_line($lines, "DESECT_QMI:Bad qmi, length mis-match!");
+            print "QXX:2:$msg_len:",length($msg_body) / 2,":\"$msg_body\"\n";
+            return;
+        }
+
+        # total(2) + dummy(10) + (ver(1) + ctrl_flag(1) + tx_id(2) +
+        # srv_id(4) + major(4) + minor(4) + con_handle(4) + msg_id(4)
+        # + msg_len(4) = 40
+        $total_len = 40 + length($msg_body) / 2;
+
+        $packet = pack 'v', $total_len;
+        $packet .= pack 'H*', $dummy;
+        $packet .= pack 'C', $ver;
+        $packet .= pack 'C', $ctrl_flag;
+        $packet .= pack 'v', $tx_id;
+        $packet .= pack 'V', $srv_id;
+        $packet .= pack 'V', $major;
+        $packet .= pack 'V', $minor;
+        $packet .= pack 'V', $con_handle;
+        $packet .= pack 'V', $msg_id;
+        $packet .= pack 'V', $msg_len;
+        $packet .= pack 'H*',$msg_body;
+
+        if( -d $tmpfs) {
+            ($DESECT_INPUT_FILE_HANDLE, $DESECT_INPUT_FILE_NAME) = tempfile(DIR => $tmpfs, SUFFIX => ".dlf");
+            ($DESECT_OUTPUT_FILE_HANDLE, $DESECT_OUTPUT_FILE_NAME) = tempfile(DIR => $tmpfs, SUFFIX => ".txt");
+        } else {
+            ($DESECT_INPUT_FILE_HANDLE, $DESECT_INPUT_FILE_NAME) = tempfile(SUFFIX => ".dlf");
+            ($DESECT_OUTPUT_FILE_HANDLE, $DESECT_OUTPUT_FILE_NAME) = tempfile(SUFFIX => ".txt");
+        }
+
+        if(! $DESECT_INPUT_FILE_HANDLE ||
+           ! $DESECT_INPUT_FILE_NAME   ||
+           ! $DESECT_OUTPUT_FILE_HANDLE||
+           ! $DESECT_OUTPUT_FILE_NAME) {
+            append_desected_qmi_line($lines, "DESECT_QMI:Unable to initialize temp file to desect qmi!");
+            return;
+        }
+
+        binmode $DESECT_INPUT_FILE_HANDLE;
+        print $DESECT_INPUT_FILE_HANDLE $packet;
+
+        # need to close first before qcat open it
+        close $DESECT_INPUT_FILE_HANDLE;
+        close $DESECT_OUTPUT_FILE_HANDLE;
+
+        if(! $QCAT_APP->Process($DESECT_INPUT_FILE_NAME, $DESECT_OUTPUT_FILE_NAME, 0, 1)) {
+            my $err = $QCAT_APP->LastError();
+            append_desected_qmi_line($lines, $err);
+        }
+
+        if(! open($DESECT_OUTPUT_FILE_HANDLE, '<', $DESECT_OUTPUT_FILE_NAME)) {
+            append_desected_qmi_line($lines, "DESECT_QMI:Failed to open file to read qmi!");
+            return;
+        }
+
+        append_desected_qmi($lines, $DESECT_OUTPUT_FILE_HANDLE);
+
+        close $DESECT_OUTPUT_FILE_HANDLE;
+
+        unlink $DESECT_INPUT_FILE_NAME;
+        unlink $DESECT_OUTPUT_FILE_NAME;
+    }
+}
+
 sub flush_qmi_block {
     my ($_lines, $config) = @_;
     my $_filter = $config->{"filter"};
@@ -410,7 +651,7 @@ sub flush_qmi_block {
 
     my @filter  = @$_filter;
     my @trans   = @$_trans;
-    my @subs    = @$_subs;
+    my @subs    = @$_subs if (defined $_subs);
     my @lines   = @$_lines;
 
     my $filtered = 0;
@@ -468,7 +709,9 @@ sub flush_qmi_block {
         }
 
         if(! $filtered) {
-            # TODO: desect QMI here if supported
+            if($QCAT_APP) {
+                desect_qmi(\@lines);
+            }
             submit_block(\@lines, undef, undef, undef);
         }
     }
@@ -542,7 +785,8 @@ sub log_desect {
             pop =~ /^\s*(\d+-\d+)\s+(\d+:\d+:\d+\.\d+)\s+(\d+)\s+(\d+)\s+([VDIEWF])\s+([^:]+)\s*:\s*(.*)$/
         );
 
-    return (date    =>  $_date,
+    return (type    =>  "log",
+            date    =>  $_date,
             time    =>  $_time,
             pid     =>  $_pid,
             tid     =>  $_tid,
@@ -719,11 +963,13 @@ sub on_opt_args {
 }
 
 sub main {
-    my $OPT_SORT    = 0;
-    my $OPT_ASCEND  = 1;
-    my $OPT_HELP    = "";
-    my $OPT_MAN     = "";
-    my $CMD_LINE    = $FindBin::Script;
+    my $OPT_DESECT_QMI  = 0;
+    my $OPT_CONDENSE_QMI= 0;
+    my $OPT_SORT        = 0;
+    my $OPT_ASCEND      = 1;
+    my $OPT_HELP        = "";
+    my $OPT_MAN         = "";
+    my $CMD_LINE        = $FindBin::Script;
 
     for my $i (@ARGV) {
         if($CMD_LINE) {
@@ -735,20 +981,22 @@ sub main {
         $CMD_LINE .= "\""  if($i !~ /-.*/);;
     }
 
-    GetOptions("tag=s@",    =>  \&on_opt_tag,
-               "handler=s@" =>  \&on_opt_handler,
-               "filter=s@"  =>  \&on_opt_filter,
-               "trans=s@"   =>  \&on_opt_trans,
-               "subs=s@"    =>  \&on_opt_subs,
+    GetOptions("tag=s@",        =>  \&on_opt_tag,
+               "handler=s@"     =>  \&on_opt_handler,
+               "filter=s@"      =>  \&on_opt_filter,
+               "trans=s@"       =>  \&on_opt_trans,
+               "subs=s@"        =>  \&on_opt_subs,
                "handler-list"   =>  \&on_opt_handler_list,
-               "out=s"      =>  \&on_opt_out,
-               "field=s"    =>  \&on_opt_field,
-               "field-list" =>  \&on_opt_field_list,
-               "<>"         =>  \&on_opt_args,
-               "sort!"      =>  \$OPT_SORT,
-               "ascend"     =>  \$OPT_ASCEND,
-               "help"       =>  \$OPT_HELP,
-               "man"        =>  \$OPT_MAN)
+               "out=s"          =>  \&on_opt_out,
+               "field=s"        =>  \&on_opt_field,
+               "field-list"     =>  \&on_opt_field_list,
+               "<>"             =>  \&on_opt_args,
+               "desect-qmi"     =>  \$OPT_DESECT_QMI,
+               "condense-qmi=i" =>  \$OPT_CONDENSE_QMI,
+               "sort!"          =>  \$OPT_SORT,
+               "ascend"         =>  \$OPT_ASCEND,
+               "help"           =>  \$OPT_HELP,
+               "man"            =>  \$OPT_MAN)
         or
         pod2usage(-verbose => 1);
 
@@ -758,13 +1006,26 @@ sub main {
     foreach my $key (keys %TAG_HANDLER_CONFIG_TABLE) {
         my $config = $TAG_HANDLER_CONFIG_TABLE{$key};
         my $_subs = $config->{"subs"};
-        my @subs = @$_subs;
+        my @subs = @$_subs if (defined $_subs);
 
         if(@subs % 2) {
             print STDERR "ERROR:Substitution arguments must come in pairs, abort!\n";
             exit -1;
         }
     }
+
+    if($OPT_DESECT_QMI) {
+        qcat_init();
+    }
+
+    if($OPT_CONDENSE_QMI        &&
+       $OPT_CONDENSE_QMI != 0   &&
+       $OPT_CONDENSE_QMI != 1   &&
+       $OPT_CONDENSE_QMI != 2) {
+        print STDERR "ERROR:Error level of condensing qmi \"$OPT_CONDENSE_QMI\", abort!\n";
+        exit -1;
+    }
+    $CONDENSE_QMI = $OPT_CONDENSE_QMI;
 
     if($OPT_SORT) {
         $OUTPUT_SORT = 1;
@@ -816,3 +1077,11 @@ sub main {
 }
 
 exit main();
+
+END {
+    if($QCAT_APP) {
+        $QCAT_APP->Exit();
+        $QCAT_APP = 0;
+    }
+}
+
