@@ -25,3 +25,15 @@ if ! type -p "$QLOGSORT_BIN" > /dev/null; then
     echo "$QLOGSORT_BIN not found, abort!";
     exit -1;
 fi
+
+case "$1" in
+    VOLTE)
+        $QLOGSORT_BIN "$@"
+        ;;
+    -h|--help)
+        echo "$0 [VOLTE] [OPTIONS]";
+        ;;
+    *)
+        $QLOGSORT_BIN "$@"
+esac
+

@@ -108,6 +108,10 @@ Qualcomm QCAT application installed and available to this program
 Condense qmi message from QCAT, this options removes many redundant
 information from the output of QCAT
 
+=item B<-hexdump-qmi>
+
+Hexdump QMI messages after desection
+
 =item B<-sort>
 
 Sort chronologically in time stamp order if there are multiple input
@@ -458,6 +462,7 @@ my %QMI_BLOCKS = (
 
 my $QCAT_APP;
 my $CONDENSE_QMI = 0;
+my $HEXDUMP_QMI  = 0;
 my $DISSECT_INPUT_FILE_HANDLE;
 my $DISSECT_INPUT_FILE_NAME;
 my $DISSECT_OUTPUT_FILE_HANDLE;
@@ -670,7 +675,9 @@ sub dissect_qmi {
         close $DISSECT_OUTPUT_FILE_HANDLE;
 
         do{
-            if(! $QCAT_APP->Process($DISSECT_INPUT_FILE_NAME, $DISSECT_OUTPUT_FILE_NAME, 0, 1)) {
+            if(! $QCAT_APP->Process($DISSECT_INPUT_FILE_NAME,
+                                    $DISSECT_OUTPUT_FILE_NAME,
+                                    $HEXDUMP_QMI, 0)) {
                 my $err = $QCAT_APP->LastError();
                 append_dissected_qmi_line($lines, $err);
                 last;
@@ -1022,8 +1029,9 @@ sub on_opt_version {
 }
 
 sub main {
-    my $OPT_DISSECT_QMI  = 0;
+    my $OPT_DISSECT_QMI = 0;
     my $OPT_CONDENSE_QMI= 0;
+    my $OPT_HEXDUMP_QMI = 0;
     my $OPT_SORT        = 0;
     my $OPT_ASCEND      = 1;
     my $OPT_NO_HEADER   = 0;
@@ -1054,6 +1062,7 @@ sub main {
                "version"        =>  \&on_opt_version,
                "dissect-qmi"    =>  \$OPT_DISSECT_QMI,
                "condense-qmi=i" =>  \$OPT_CONDENSE_QMI,
+               "hexdump-qmi"    =>  \$OPT_HEXDUMP_QMI,
                "sort!"          =>  \$OPT_SORT,
                "ascend"         =>  \$OPT_ASCEND,
                "no-header"      =>  \$OPT_NO_HEADER,
@@ -1078,16 +1087,21 @@ sub main {
 
     if($OPT_DISSECT_QMI) {
         qcat_init();
-    }
 
-    if($OPT_CONDENSE_QMI        &&
-       $OPT_CONDENSE_QMI != 0   &&
-       $OPT_CONDENSE_QMI != 1   &&
-       $OPT_CONDENSE_QMI != 2) {
-        print STDERR "ERROR:Error level of condensing qmi \"$OPT_CONDENSE_QMI\", abort!\n";
-        exit -1;
+        if($OPT_CONDENSE_QMI        &&
+           $OPT_CONDENSE_QMI != 0   &&
+           $OPT_CONDENSE_QMI != 1   &&
+           $OPT_CONDENSE_QMI != 2) {
+            print STDERR "ERROR:Error level of condensing qmi \"$OPT_CONDENSE_QMI\", abort!\n";
+            exit -1;
+        }
+
+        $CONDENSE_QMI = $OPT_CONDENSE_QMI;
+
+        if($OPT_HEXDUMP_QMI) {
+            $HEXDUMP_QMI = 1;
+        }
     }
-    $CONDENSE_QMI = $OPT_CONDENSE_QMI;
 
     if($OPT_SORT) {
         $OUTPUT_SORT = 1;
