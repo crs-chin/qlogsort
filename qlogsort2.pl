@@ -505,12 +505,20 @@ sub append_dissected_qmi_line {
 #          nas_get_sys_info_respTlvs[0] {
 
 sub append_dissected_qmi {
-    my ($lines, $fd) = @_;
+    my ($lines, $fd, $qmi_version) = @_;
 
     if(! $CONDENSE_QMI) {
-        while(<$fd>) {
-            if($_ =~ /0x1544\s*QMI_MCS_QCSI_PKT/) {
-                last;
+        if($qmi_version eq "QMI_FW") {
+            while(<$fd>) {
+                if($_ =~ /0x1544\s*QMI_MCS_QCSI_PKT/) {
+                    last;
+                }
+            }
+        } else {
+            while(<$fd>) {
+                if($_ =~ /0x1391\s*QMI Link/) {
+                    last;
+                }
             }
         }
 
@@ -553,17 +561,31 @@ sub dissect_qmi {
         my $major       = 1;
         my $minor       = 146;
         my $con_handle  = 0;
-        my $dummy       = "44150000000000000000";
+        my $dummy_qc_qmi= "91130000000000000000";
+        my $dummy_qmi_fw= "44150000000000000000";
         my ($msg_len, $srv_id, $msg_id, $tx_id, $msg_type) = (
             $lines->[0]->{"log"}
             =~
             /.*QMI_Msg Len:\s*\[(\d+)\].*\s*Serv_ID:\s*\[\w+\(0x([0-9a-fA-F]+)\)\].*\s*Msg_ID:\s*\[[\w<>]+\(0x([0-9a-fA-F]+)\)\].*Trans_ID:\s*\[(\d+)\]\s*\[(Request|Response|Indication)\]/
-            );
+        );
+        my ($qmi_version) = (
+            $lines->[0]->{"tag"} =~ /(QMI_FW|QC-QMI)/
+        );
         my $msg_body;
         my $total_len;
         my $packet;
 
-        if(! $msg_len || ! $srv_id || ! $msg_id || ! $tx_id || ! $msg_type) {
+        if(! $msg_len   ||
+           ! $srv_id    ||
+           ! $msg_id    ||
+           ! $tx_id     ||
+           ! $msg_type) {
+            append_dissected_qmi_line($lines, "DISSECT_QMI:Incomplete or malformed qmi log");
+            return;
+        }
+
+        if(! $qmi_version) {
+            append_dissected_qmi_line($lines, "DISSECT_QMI:Unknown qmi version");
             return;
         }
 
@@ -597,23 +619,32 @@ sub dissect_qmi {
             return;
         }
 
-        # total(2) + dummy(10) + (ver(1) + ctrl_flag(1) + tx_id(2) +
-        # srv_id(4) + major(4) + minor(4) + con_handle(4) + msg_id(4)
-        # + msg_len(4) = 40
-        $total_len = 40 + length($msg_body) / 2;
+        if($qmi_version eq "QMI_FW") {
+            # total(2) + dummy(10) + (ver(1) + ctrl_flag(1) + tx_id(2) +
+            # srv_id(4) + major(4) + minor(4) + con_handle(4) + msg_id(4)
+            # + msg_len(4) = 40
+            $total_len = 40 + length($msg_body) / 2;
 
-        $packet = pack 'v', $total_len;
-        $packet .= pack 'H*', $dummy;
-        $packet .= pack 'C', $ver;
-        $packet .= pack 'C', $ctrl_flag;
-        $packet .= pack 'v', $tx_id;
-        $packet .= pack 'V', $srv_id;
-        $packet .= pack 'V', $major;
-        $packet .= pack 'V', $minor;
-        $packet .= pack 'V', $con_handle;
-        $packet .= pack 'V', $msg_id;
-        $packet .= pack 'V', $msg_len;
-        $packet .= pack 'H*',$msg_body;
+            $packet = pack 'v', $total_len;
+            $packet .= pack 'H*', $dummy_qmi_fw;
+            $packet .= pack 'C', $ver;
+            $packet .= pack 'C', $ctrl_flag;
+            $packet .= pack 'v', $tx_id;
+            $packet .= pack 'V', $srv_id;
+            $packet .= pack 'V', $major;
+            $packet .= pack 'V', $minor;
+            $packet .= pack 'V', $con_handle;
+            $packet .= pack 'V', $msg_id;
+            $packet .= pack 'V', $msg_len;
+            $packet .= pack 'H*',$msg_body;
+        } else { # QC-QMI
+            # total(2) + dummy(10) = 12
+            $total_len = 12 + length($msg_body) / 2;
+
+            $packet  = pack 'v', $total_len;
+            $packet .= pack 'H*', $dummy_qc_qmi;
+            $packet .= pack 'H*', $msg_body;
+        }
 
         if( -d $tmpfs) {
             ($DISSECT_INPUT_FILE_HANDLE, $DISSECT_INPUT_FILE_NAME) = tempfile(DIR => $tmpfs, SUFFIX => ".dlf");
@@ -650,7 +681,7 @@ sub dissect_qmi {
                 last;
             }
 
-            append_dissected_qmi($lines, $DISSECT_OUTPUT_FILE_HANDLE);
+            append_dissected_qmi($lines, $DISSECT_OUTPUT_FILE_HANDLE, $qmi_version);
 
             close $DISSECT_OUTPUT_FILE_HANDLE;
         }while(0);
@@ -749,7 +780,7 @@ sub handle_qmi {
     }
 
     # not QMI log, verify end of qmi msg
-    if($line{"tag"} !~ /QMI_FW/) {
+    if($line{"tag"} !~ /QMI_FW|QC-QMI/) {
         if (exists $QMI_BLOCKS{$line{"tid"}}) {
             flush_qmi_block($QMI_BLOCKS{$line{"tid"}}, $_config);
             delete $QMI_BLOCKS{$line{"tid"}};
@@ -764,7 +795,10 @@ sub handle_qmi {
             delete $QMI_BLOCKS{$line{"tid"}};
         }
 
-        push @{ $QMI_BLOCKS{$line{"tid"}} }, \%line;
+        # real new start of qmi message
+        if($line{"log"} =~ /QMI_Msg Len/) {
+            push @{ $QMI_BLOCKS{$line{"tid"}} }, \%line;
+        }
         return;
     }
 
