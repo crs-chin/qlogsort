@@ -567,7 +567,7 @@ sub append_dissected_qmi {
             if($_ !~ /^\s*$/) {
                 if($CONDENSE_QMI != 2 ||
                    $_ !~ /^\s*Type\s*=|^\s*Length\s*=|^\s*resp\s*\{$|^\s*\}$/) {
-                    $_ =~ s/\s*\{|_respTlvs\[\d*\]\s*\{|_reqTlvs\[\d*\]\s*\{|_indTlvs\[\d*\]\s*\{//g;
+                    $_ =~ s/\s*\{|\s*\}|_respTlvs\[\d*\]\s*\{|_reqTlvs\[\d*\]\s*\{|_indTlvs\[\d*\]\s*\{//g;
                     append_dissected_qmi_line($lines, $_);
                 }
             }
