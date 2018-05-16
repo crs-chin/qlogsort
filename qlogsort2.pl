@@ -240,7 +240,7 @@ sub submit_header {
                         $OPT_FIELD{"message"} ? "    " : "",
                         $OPT_FIELD{"message"} ? "MESSAGE" : "");
 
-    if($OUTPUT_NO_HEADER) {
+    if(! $OUTPUT_NO_HEADER) {
         print $OUTPUT_STREAM "=======================FILTERED WITH CMD LINE=======================\n";
         print $OUTPUT_STREAM "$cmd_line\n";
         print $OUTPUT_STREAM "====================================================================\n";
@@ -1105,6 +1105,10 @@ sub main {
 
     if($OPT_SORT) {
         $OUTPUT_SORT = 1;
+    }
+
+    if($OPT_NO_HEADER) {
+        $OUTPUT_NO_HEADER = 1;
     }
 
     if(@INPUT_STREAMS == 0) {
