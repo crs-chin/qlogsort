@@ -80,6 +80,10 @@ the matching REGEX will be replaced with the next pattern specified by
 the "XX" is enclosed in parenthesis is to be captured by "$1" in the next
 pattern, note, this arguments must come in pairs.
 
+=item B<-qmi-subs=REGEX AND PATTERN>
+
+Specify REGEX as substitution regex to the dissected qmi message
+
 =item B<-handler-list>
 
 List available handlers which can be specified in the -handler
@@ -461,12 +465,14 @@ my %QMI_BLOCKS = (
 );
 
 my $QCAT_APP;
-my $CONDENSE_QMI = 0;
-my $HEXDUMP_QMI  = 0;
+my $CONDENSE_QMI    = 0;
+my $HEXDUMP_QMI     = 0;
 my $DISSECT_INPUT_FILE_HANDLE;
 my $DISSECT_INPUT_FILE_NAME;
 my $DISSECT_OUTPUT_FILE_HANDLE;
 my $DISSECT_OUTPUT_FILE_NAME;
+
+my @SUBSTITUTE_QMI  = ();
 
 sub qcat_init {
     return if $QCAT_APP;
@@ -479,6 +485,21 @@ sub qcat_init {
 
 sub append_dissected_qmi_line {
     my ($lines, $message) = @_;
+
+    if(@SUBSTITUTE_QMI > 0) {
+        my $search;
+        my $replace;
+
+        for(my $i = 0; $i < @SUBSTITUTE_QMI; $i += 2) {
+            $search = $SUBSTITUTE_QMI[$i];
+            $replace = $SUBSTITUTE_QMI[$i + 1];
+
+            $replace =~ s/"/\\"/g;
+            $replace = '"' . $replace . '"';
+
+            $message =~ s/$search/$replace/gee;
+        }
+    }
 
     push @$lines, {
         type    =>  "qmi",
@@ -953,6 +974,12 @@ sub on_opt_subs {
     push @{ $config->{"subs"} }, $value;
 }
 
+sub on_opt_qmi_subs {
+    my ($name, $value) = @_;
+
+    push @SUBSTITUTE_QMI, $value;
+}
+
 sub on_opt_handler_list {
     print "Supported tag handlers:\n";
     for my $h (keys %TAG_HANDLER_TABLE) {
@@ -1054,6 +1081,7 @@ sub main {
                "filter=s@"      =>  \&on_opt_filter,
                "trans=s@"       =>  \&on_opt_trans,
                "subs=s@"        =>  \&on_opt_subs,
+               "qmi-subs=s@"    =>  \&on_opt_qmi_subs,
                "handler-list"   =>  \&on_opt_handler_list,
                "out=s"          =>  \&on_opt_out,
                "field=s"        =>  \&on_opt_field,
@@ -1100,6 +1128,11 @@ sub main {
 
         if($OPT_HEXDUMP_QMI) {
             $HEXDUMP_QMI = 1;
+        }
+
+        if(@SUBSTITUTE_QMI % 2) {
+            print STDERR "ERROR:QMI substitution arguments must come in pairs, abort!\n";
+            exit -1;
         }
     }
 

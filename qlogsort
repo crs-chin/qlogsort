@@ -26,12 +26,20 @@ if ! type -p "$QLOGSORT_BIN" > /dev/null; then
     exit -1;
 fi
 
-case "$1" in
-    VOLTE)
+CMD="$1";
+shift;
+
+. colortbl.sh
+
+case "$CMD" in
+    volte|VOLTE)
         $QLOGSORT_BIN "$@"
         ;;
+    DEQMI|deqmi)
+        $QLOGSORT_BIN -qmi-subs '(.*)' -qmi-subs "${RED[$BOLD]}\$1${RESET}"  -no-header -tag '.*' -handler qmi -dissect-qmi -sort -condense-qmi 1 -field all "$@"
+        ;;
     -h|--help)
-        echo "$0 [VOLTE] [OPTIONS]";
+        echo "$0 [VOLTE|DEQMI] [OPTIONS]";
         ;;
     *)
         $QLOGSORT_BIN "$@"
