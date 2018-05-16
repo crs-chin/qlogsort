@@ -112,6 +112,11 @@ Qualcomm QCAT application installed and available to this program
 Condense qmi message from QCAT, this options removes many redundant
 information from the output of QCAT
 
+=item B<-hex-qmi-num>
+
+Also print numbers in dissected qmi messages in hex format if numbers
+in decimal, print in decimal format if number in hex
+
 =item B<-hexdump-qmi>
 
 Hexdump QMI messages after desection
@@ -467,6 +472,7 @@ my %QMI_BLOCKS = (
 my $QCAT_APP;
 my $CONDENSE_QMI    = 0;
 my $HEXDUMP_QMI     = 0;
+my $HEX_QMI_NUM     = 0;
 my $DISSECT_INPUT_FILE_HANDLE;
 my $DISSECT_INPUT_FILE_NAME;
 my $DISSECT_OUTPUT_FILE_HANDLE;
@@ -489,6 +495,14 @@ sub append_dissected_qmi_line {
     if(@SUBSTITUTE_QMI > 0) {
         my $search;
         my $replace;
+
+        if($HEX_QMI_NUM) {
+            if($message =~ /0[xX][\dA-Fa-f]+/) {
+                $message =~ s/(0[xX][\dA-Fa-f]+)/"sprintf \"\$1\\[%d\\]\",hex(\$1);"/gee;
+            } else {
+                $message =~ s/(\d+)/"sprintf \"\$1\\[0x%X\\]\",\$1;"/gee;
+            }
+        }
 
         for(my $i = 0; $i < @SUBSTITUTE_QMI; $i += 2) {
             $search = $SUBSTITUTE_QMI[$i];
@@ -1059,6 +1073,7 @@ sub main {
     my $OPT_DISSECT_QMI = 0;
     my $OPT_CONDENSE_QMI= 0;
     my $OPT_HEXDUMP_QMI = 0;
+    my $OPT_HEX_QMI_NUM = 0;
     my $OPT_SORT        = 0;
     my $OPT_ASCEND      = 1;
     my $OPT_NO_HEADER   = 0;
@@ -1091,6 +1106,7 @@ sub main {
                "dissect-qmi"    =>  \$OPT_DISSECT_QMI,
                "condense-qmi=i" =>  \$OPT_CONDENSE_QMI,
                "hexdump-qmi"    =>  \$OPT_HEXDUMP_QMI,
+               "hex-qmi-num"    =>  \$OPT_HEX_QMI_NUM,
                "sort!"          =>  \$OPT_SORT,
                "ascend"         =>  \$OPT_ASCEND,
                "no-header"      =>  \$OPT_NO_HEADER,
@@ -1128,6 +1144,10 @@ sub main {
 
         if($OPT_HEXDUMP_QMI) {
             $HEXDUMP_QMI = 1;
+        }
+
+        if($OPT_HEX_QMI_NUM) {
+            $HEX_QMI_NUM = 1;
         }
 
         if(@SUBSTITUTE_QMI % 2) {
