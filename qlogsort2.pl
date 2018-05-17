@@ -107,6 +107,10 @@ List available field, use "all" to enable all fields output
 Dissect QMI messages if available, using this options must have
 Qualcomm QCAT application installed and available to this program
 
+=item B<-dissect-qmi-filter=REGEX>
+
+Specify the REGEX for which the matching qmi will be dissected
+
 =item B<-condense-qmi=[0|1|2]>
 
 Condense qmi message from QCAT, this options removes many redundant
@@ -473,11 +477,13 @@ my $QCAT_APP;
 my $CONDENSE_QMI    = 0;
 my $HEXDUMP_QMI     = 0;
 my $HEX_QMI_NUM     = 0;
+
 my $DISSECT_INPUT_FILE_HANDLE;
 my $DISSECT_INPUT_FILE_NAME;
 my $DISSECT_OUTPUT_FILE_HANDLE;
 my $DISSECT_OUTPUT_FILE_NAME;
 
+my @DISSECT_FILTER  = ();
 my @SUBSTITUTE_QMI  = ();
 
 sub qcat_init {
@@ -763,7 +769,16 @@ sub flush_qmi_block {
         }
 
         if(! $filtered && $QCAT_APP) {
-            dissect_qmi(\@lines);
+            if(@DISSECT_FILTER > 0) {
+                for my $f (@DISSECT_FILTER) {
+                    if($l{"log"} =~ $f) {
+                        dissect_qmi(\@lines);
+                        last;
+                    }
+                }
+            } else {
+                dissect_qmi(\@lines);
+            }
         }
 
         # qmi has non-default trans handling
@@ -1008,6 +1023,12 @@ sub on_opt_qmi_subs {
     push @SUBSTITUTE_QMI, $value;
 }
 
+sub on_opt_dissect_qmi_filter {
+    my ($name, $value) = @_;
+
+    push @DISSECT_FILTER, $value;
+}
+
 sub on_opt_handler_list {
     print "Supported tag handlers:\n";
     for my $h (keys %TAG_HANDLER_TABLE) {
@@ -1105,27 +1126,28 @@ sub main {
         $CMD_LINE .= "\""  if($_ !~ /-.*/);;
     }
 
-    GetOptions("tag=s@",        =>  \&on_opt_tag,
-               "handler=s@"     =>  \&on_opt_handler,
-               "filter=s@"      =>  \&on_opt_filter,
-               "trans=s@"       =>  \&on_opt_trans,
-               "subs=s@"        =>  \&on_opt_subs,
-               "qmi-subs=s@"    =>  \&on_opt_qmi_subs,
-               "handler-list"   =>  \&on_opt_handler_list,
-               "out=s"          =>  \&on_opt_out,
-               "field=s"        =>  \&on_opt_field,
-               "field-list"     =>  \&on_opt_field_list,
-               "<>"             =>  \&on_opt_args,
-               "version"        =>  \&on_opt_version,
-               "dissect-qmi"    =>  \$OPT_DISSECT_QMI,
-               "condense-qmi=i" =>  \$OPT_CONDENSE_QMI,
-               "hexdump-qmi"    =>  \$OPT_HEXDUMP_QMI,
-               "hex-qmi-num"    =>  \$OPT_HEX_QMI_NUM,
-               "sort!"          =>  \$OPT_SORT,
-               "ascend"         =>  \$OPT_ASCEND,
-               "no-header"      =>  \$OPT_NO_HEADER,
-               "help"           =>  \$OPT_HELP,
-               "man"            =>  \$OPT_MAN)
+    GetOptions("tag=s@",                =>  \&on_opt_tag,
+               "handler=s@"             =>  \&on_opt_handler,
+               "filter=s@"              =>  \&on_opt_filter,
+               "trans=s@"               =>  \&on_opt_trans,
+               "subs=s@"                =>  \&on_opt_subs,
+               "qmi-subs=s@"            =>  \&on_opt_qmi_subs,
+               "dissect-qmi-filter=s@"  =>  \&on_opt_dissect_qmi_filter,
+               "handler-list"           =>  \&on_opt_handler_list,
+               "out=s"                  =>  \&on_opt_out,
+               "field=s"                =>  \&on_opt_field,
+               "field-list"             =>  \&on_opt_field_list,
+               "<>"                     =>  \&on_opt_args,
+               "version"                =>  \&on_opt_version,
+               "dissect-qmi"            =>  \$OPT_DISSECT_QMI,
+               "condense-qmi=i"         =>  \$OPT_CONDENSE_QMI,
+               "hexdump-qmi"            =>  \$OPT_HEXDUMP_QMI,
+               "hex-qmi-num"            =>  \$OPT_HEX_QMI_NUM,
+               "sort!"                  =>  \$OPT_SORT,
+               "ascend"                 =>  \$OPT_ASCEND,
+               "no-header"              =>  \$OPT_NO_HEADER,
+               "help"                   =>  \$OPT_HELP,
+               "man"                    =>  \$OPT_MAN)
         or
         pod2usage(-verbose => 1);
 
