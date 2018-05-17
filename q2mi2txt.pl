@@ -22,6 +22,7 @@ BEGIN {
     push @INC, "/Applications/QCAT/QCAT/Script";
 }
 
+use Tk;
 use strict;
 use warnings;
 use FindBin;
@@ -45,6 +46,10 @@ q2mi2txt.pl - [OPTIONS] [ANDROID LOG FILE LIST]
 =head1 OPTIONS
 
 =over 4
+
+=item B<-cli>
+
+Command line interface mode, otherwise GUI mode using Tk framework will be used instead
 
 =item B<-condense-qmi=[0|1|2]>
 
@@ -76,13 +81,16 @@ my $DISSECT_INPUT_FILE_NAME;
 my $DISSECT_OUTPUT_FILE_HANDLE;
 my $DISSECT_OUTPUT_FILE_NAME;
 
+my $UI_DISSECT_INPUT;
+my $UI_DISSECT_OUTPUT;
+
 sub qcat_init {
     return if $QCAT_APP;
 
     $QCAT_APP = newQCAT6Application();
     if(! $QCAT_APP) {
         print STDERR "ERROR: Unable to initialize QCAT, abort!\n";
-        exit -1;
+        exit (-1);
     }
 }
 
@@ -97,7 +105,12 @@ sub qcat_finit {
 sub append_dissected_qmi_line {
     my ($line) = @_;
 
-    print $line,"\n";
+    if(! defined $UI_DISSECT_OUTPUT) {
+        print $line,"\n";
+        return;
+    }
+
+    $UI_DISSECT_OUTPUT->insert("end", $line . "\n");
 }
 
 sub append_dissected_qmi {
@@ -137,8 +150,9 @@ sub append_dissected_qmi {
     }while(<$fd>);
 }
 
-sub dissect_qmi {
-    my $tmpfs = "/dev/shm";
+sub do_dissect_qmi {
+    my ($lines)     = @_;
+    my $tmpfs       = "/dev/shm";
     my $ver         = 2;    # currently, only version 2 supported
     my $ctrl_flag   = 0;
     my $major       = 1;
@@ -152,9 +166,9 @@ sub dissect_qmi {
 
     use integer;
 
-    while(<>) {
+    for (my $i = 0; $i < @$lines; ++$i) {
         my ($qmi_version, $msg_len, $srv_id, $msg_id, $tx_id, $msg_type) = (
-            $_
+            $lines->[$i]
             =~
             /.*(QC-QMI|QMI_FW).*QMI_Msg Len:\s*\[(\d+)\].*\s*Serv_ID:\s*\[\w+\(0x([0-9a-fA-F]+)\)\].*\s*Msg_ID:\s*\[[\w<>]+\(0x([0-9a-fA-F]+)\)\].*Trans_ID:\s*\[(\d+)\]\s*\[(Request|Response|Indication)\]/
         );
@@ -187,10 +201,10 @@ sub dissect_qmi {
             $major = 2;
         }
 
-        while(<>) {
-            $_ =~ s/.*://;
-            $_ =~ s/\s+//g;
-            $msg_body .= $_;
+        for(++$i; $i < @$lines; ++$i) {
+            $lines->[$i] =~ s/.*://;
+            $lines->[$i] =~ s/\s+//g;
+            $msg_body .= $lines->[$i];
         }
 
         if($msg_len != length($msg_body) / 2) {
@@ -272,6 +286,87 @@ sub dissect_qmi {
     }
 }
 
+sub dissect_qmi {
+    my @lines;
+
+    while(<>) {
+        push @lines, $_;
+    }
+
+    do_dissect_qmi(\@lines);
+}
+
+sub on_dissect {
+    my @input   = ();
+    my $nlines  = $UI_DISSECT_INPUT->index("end - 1 lines");
+
+    use integer;
+    for(my $i = 1; $i <= $nlines; ++$i) {
+        push @input, $UI_DISSECT_INPUT->get("$i.0", "$i.end");
+    }
+
+    $UI_DISSECT_OUTPUT->configure(-state   => "normal");
+    $UI_DISSECT_OUTPUT->delete("1.0", "end");
+
+    do_dissect_qmi(\@input);
+
+    $UI_DISSECT_OUTPUT->configure(-state   => "disabled");
+}
+
+sub launch_ui {
+    my $mw = MainWindow->new;
+
+    $mw->geometry("800x800");
+    $mw->title("QMI Parser For UNIX");
+
+    my $top_fm = $mw->Frame()
+        ->pack(-side        => "top",
+               -fill        => "x");
+
+    $top_fm->Label(-text    => "QMI logs:")
+        ->pack(-side        => "left");
+
+    $top_fm->Button(-text   => "Dissect",
+                    -command=> \&on_dissect)
+        ->pack(-side        => "right");
+
+    my $top1_fm = $mw->Frame()
+        ->pack(-side        => "top",
+               -fill        => "x");
+
+    my $top1_top_fm = $top1_fm->Frame()
+        ->pack(-side        => "top",
+               -fill        => "x");
+    my $input = $top1_top_fm->Text(-borderwidth     => 5)
+        ->pack(-side        => "top",
+               -fill        => "x");
+
+    my $top1_bottom_fm = $top1_fm->Frame()
+        ->pack(-side        => "bottom",
+               -fill        => "x");
+
+    my $bottom1_bottom_top_fm = $top1_bottom_fm->Frame()
+        ->pack(-side        => "top",
+               -fill        => "x");
+    $bottom1_bottom_top_fm->Label(-text => "Dissect:")
+        ->pack(-side        => "left");
+
+    my $output = $top1_bottom_fm->Text(-state       => "disabled",
+                                       -borderwidth => 5,
+                                       -font        => "r16")
+        ->pack(-side        => "bottom",
+               -fill        => "both");
+
+    $output->configure(-state   => "normal");
+    $output->insert("end", "Dissected QMI will be displayed here!");
+    $output->configure(-state   => "disabled");
+
+    $UI_DISSECT_INPUT   = $input;
+    $UI_DISSECT_OUTPUT  = $output;
+
+    MainLoop;
+}
+
 sub on_opt_version {
     my ($name, $value) = @_;
 
@@ -280,12 +375,14 @@ sub on_opt_version {
 }
 
 sub main {
+    my $OPT_CLI         = 0;
     my $OPT_CONDENSE_QMI= 0;
     my $OPT_HELP        = "";
     my $OPT_MAN         = "";
 
-    GetOptions("version"        =>  \&on_opt_version,
+    GetOptions("cli"            =>  \$OPT_CLI,
                "condense-qmi=i" =>  \$OPT_CONDENSE_QMI,
+               "version"        =>  \&on_opt_version,
                "help"           =>  \$OPT_HELP,
                "man"            =>  \$OPT_MAN)
         or
@@ -299,21 +396,25 @@ sub main {
        $OPT_CONDENSE_QMI != 1   &&
        $OPT_CONDENSE_QMI != 2) {
         print STDERR "ERROR:Error level of condensing qmi \"$OPT_CONDENSE_QMI\", abort!\n";
-        exit -1;
+        return -1;
     }
 
     $CONDENSE_QMI = $OPT_CONDENSE_QMI;
 
     qcat_init();
 
-    dissect_qmi();
+    if(! $OPT_CLI) {
+        launch_ui();
+    } else {
+        dissect_qmi();
+    }
 
     qcat_finit();
 
     return 0;
 }
 
-exit main();
+exit main;
 
 END {
     if($QCAT_APP) {
