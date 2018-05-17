@@ -104,13 +104,26 @@ sub qcat_finit {
 
 sub append_dissected_qmi_line {
     my ($line) = @_;
+    my $num;
 
     if(! defined $UI_DISSECT_OUTPUT) {
         print $line,"\n";
         return;
     }
 
-    $UI_DISSECT_OUTPUT->insert("end", $line . "\n");
+    if($line =~ /(.*)(0[xX][\dA-Fa-f]+)(.*)/) {
+        $num =  $2 . sprintf "\[%d\]", hex($2);
+        $UI_DISSECT_OUTPUT->insert("end", $1);
+        $UI_DISSECT_OUTPUT->insert("end", $num, 'number');
+        $UI_DISSECT_OUTPUT->insert("end", $3 . "\n");
+    } elsif($line =~ /([^\d]*)([\d]+)(.*)/) {
+        $num =  $2 . sprintf "\[0x%X\]", $2;
+        $UI_DISSECT_OUTPUT->insert("end", $1);
+        $UI_DISSECT_OUTPUT->insert("end", $num, 'number');
+        $UI_DISSECT_OUTPUT->insert("end", $3 . "\n");
+    } else {
+        $UI_DISSECT_OUTPUT->insert("end", $line . "\n");
+    }
 }
 
 sub append_dissected_qmi {
@@ -305,7 +318,8 @@ sub on_dissect {
         push @input, $UI_DISSECT_INPUT->get("$i.0", "$i.end");
     }
 
-    $UI_DISSECT_OUTPUT->configure(-state   => "normal");
+    $UI_DISSECT_OUTPUT->configure(-state        => "normal",
+                                  -foreground   => "blue");
     $UI_DISSECT_OUTPUT->delete("1.0", "end");
 
     do_dissect_qmi(\@input);
@@ -337,7 +351,8 @@ sub launch_ui {
     my $top1_top_fm = $top1_fm->Frame()
         ->pack(-side        => "top",
                -fill        => "x");
-    my $input = $top1_top_fm->Text(-borderwidth     => 5)
+    my $input = $top1_top_fm->Text(-borderwidth     => 5,
+                                   -foreground      => "black")
         ->pack(-side        => "top",
                -fill        => "x");
 
@@ -353,10 +368,12 @@ sub launch_ui {
 
     my $output = $top1_bottom_fm->Text(-state       => "disabled",
                                        -borderwidth => 5,
-                                       -font        => "r16")
+                                       -font        => "r16",
+                                       -foreground  => "grey")
         ->pack(-side        => "bottom",
                -fill        => "both");
 
+    $output->tagConfigure('number', -underline => 1);
     $output->configure(-state   => "normal");
     $output->insert("end", "Dissected QMI will be displayed here!");
     $output->configure(-state   => "disabled");
