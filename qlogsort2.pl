@@ -1047,8 +1047,8 @@ sub on_opt_field {
 
 sub on_opt_field_list {
     print "Supported field list:\n";
-    for my $f (keys %OPT_FIELD) {
-        print "  $f\n";
+    foreach (keys %OPT_FIELD) {
+        print "  $_\n";
     }
     print "  all\n";
     exit 0;
@@ -1095,14 +1095,14 @@ sub main {
     my $OPT_MAN         = "";
     my $CMD_LINE        = $FindBin::Script;
 
-    for my $i (@ARGV) {
+    foreach (@ARGV) {
         if($CMD_LINE) {
             $CMD_LINE .= " ";
         }
 
-        $CMD_LINE .= "\""  if($i !~ /-.*/);
-        $CMD_LINE .= $i;
-        $CMD_LINE .= "\""  if($i !~ /-.*/);;
+        $CMD_LINE .= "\""  if($_ !~ /-.*/);
+        $CMD_LINE .= $_;
+        $CMD_LINE .= "\""  if($_ !~ /-.*/);;
     }
 
     GetOptions("tag=s@",        =>  \&on_opt_tag,
@@ -1194,6 +1194,7 @@ sub main {
 
     foreach my $in (@INPUT_STREAMS) {
         my $fd = $in->{"fd"};
+        my $handled;
         my %log;
 
         while(<$fd>) {
@@ -1202,19 +1203,27 @@ sub main {
             %log = log_dissect($_);
             next if (!  $log{"tag"});
 
-            for my $key (keys %TAG_HANDLER_CONFIG_TABLE) {
-                if($log{"tag"} =~ $key) {
-                    my $config = $TAG_HANDLER_CONFIG_TABLE{$key};
+            $handled = 0;
+            foreach (keys %TAG_HANDLER_CONFIG_TABLE) {
+                if($_ ne "default" && $log{"tag"} =~ $_) {
+                    my $config = $TAG_HANDLER_CONFIG_TABLE{$_};
 
                     $config->{"handler"}(\%log, $config);
+                    $handled = 1;
                 }
+            }
+
+            if(! $handled && (exists $TAG_HANDLER_CONFIG_TABLE{"default"})) {
+                my $config = $TAG_HANDLER_CONFIG_TABLE{"default"};
+
+                $config->{"handler"}(\%log, $config);
             }
         }
     }
 
     # flush all tags by sending undef %log
-    for my $key (keys %TAG_HANDLER_CONFIG_TABLE) {
-        my $config = $TAG_HANDLER_CONFIG_TABLE{$key};
+    foreach (keys %TAG_HANDLER_CONFIG_TABLE) {
+        my $config = $TAG_HANDLER_CONFIG_TABLE{$_};
         $config->{"handler"}(undef, $config);
     }
 
