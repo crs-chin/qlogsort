@@ -612,7 +612,7 @@ sub dissect_qmi {
         my ($msg_len, $srv_id, $msg_id, $tx_id, $msg_type) = (
             $lines->[0]->{"log"}
             =~
-            /.*QMI_Msg Len:\s*\[(\d+)\].*\s*Serv_ID:\s*\[\w+\(0x([0-9a-fA-F]+)\)\].*\s*Msg_ID:\s*\[[\w<>]+\(0x([0-9a-fA-F]+)\)\].*Trans_ID:\s*\[(\d+)\]\s*\[(Request|Response|Indication)\]/
+            /.*QMI_Msg Len:\s*\[(\d+)\].*\s*Serv_ID:\s*\[[\w<>]+\(0x([0-9a-fA-F]+)\)\].*\s*Msg_ID:\s*\[[\w<>]+\(0x([0-9a-fA-F]+)\)\].*Trans_ID:\s*\[(\d+)\]\s*\[(Request|Response|Indication)\]/
         );
         my ($qmi_version) = (
             $lines->[0]->{"tag"} =~ /(QMI_FW|QC-QMI)/
