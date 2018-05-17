@@ -739,10 +739,10 @@ sub flush_qmi_block {
     my $_trans  = $config->{"trans"};
     my $_subs   = $config->{"subs"};
 
-    my @filter  = @$_filter;
-    my @trans   = @$_trans;
+    my @filter  = @$_filter if (defined $_filter);
+    my @trans   = @$_trans if (defined $_trans);
     my @subs    = @$_subs if (defined $_subs);
-    my @lines   = @$_lines;
+    my @lines   = @{ $_lines->{"lines"} };
 
     my $filtered = 0;
 
@@ -810,7 +810,8 @@ sub flush_qmi_block {
 
 sub handle_qmi {
     my ($_line, $_config) = @_;
-    my %line    =   %$_line if (defined $_line);
+    my %line        = %$_line if (defined $_line);
+    my $qmi_start   = 0;
 
     # all input steam finished
     if (! defined $_line) {
@@ -827,6 +828,12 @@ sub handle_qmi {
             flush_qmi_block($QMI_BLOCKS{$line{"tid"}}, $_config);
             delete $QMI_BLOCKS{$line{"tid"}};
         }
+
+        # not qmi log either, even with qmi tag
+        submit_block([ \%line ],
+                     $_config->{"filter"},
+                     $_config->{"trans"},
+                     $_config->{"subs"});
         return;
     }
 
@@ -837,25 +844,32 @@ sub handle_qmi {
             delete $QMI_BLOCKS{$line{"tid"}};
         }
 
-        # real new start of qmi message
-        if($line{"log"} =~ /QMI_Msg Len/) {
-            push @{ $QMI_BLOCKS{$line{"tid"}} }, \%line;
+        # not qmi log either
+        if($line{"log"} !~ /QMI_Msg\s*Len:\s*\[(\d+)\]/) {
+            submit_block([ \%line ],
+                         $_config->{"filter"},
+                         $_config->{"trans"},
+                         $_config->{"subs"});
+            return;
         }
-        return;
+
+        $QMI_BLOCKS{$line{"tid"}}->{"total_len"} = $1;
+        $QMI_BLOCKS{$line{"tid"}}->{"accumu_len"} = 0;
+        $qmi_start = 1;
     }
 
-    # end of qmi msg
-    my @bytes = split /\s+/, $line{"log"};
-    if(@bytes < 32) {
-        push @{ $QMI_BLOCKS{$line{"tid"}} }, \%line;
+    push @{ $QMI_BLOCKS{$line{"tid"}}->{"lines"} }, \%line;
+    if(! $qmi_start) {
+        my @bytes = split /\s+/, $line{"log"};
+        $QMI_BLOCKS{$line{"tid"}}->{"accumu_len"} += scalar @bytes;
+    } 
 
+    if ($QMI_BLOCKS{$line{"tid"}}->{"total_len"} == 0 ||
+        $QMI_BLOCKS{$line{"tid"}}->{"total_len"}  <=
+        $QMI_BLOCKS{$line{"tid"}}->{"accumu_len"}) {
         flush_qmi_block($QMI_BLOCKS{$line{"tid"}}, $_config);
         delete $QMI_BLOCKS{$line{"tid"}};
-        return;
     }
-
-    # middle of qmi msg
-    push @{ $QMI_BLOCKS{$line{"tid"}} }, \%line;
 }
 
 
