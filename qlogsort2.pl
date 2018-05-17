@@ -172,7 +172,7 @@ decimal digits
 
 =cut
 
-my $VERSION = 'version 1.0.2 (c) crs.chin@gmain.com';
+my $VERSION = 'version 1.0.5 (c) crs.chin@gmain.com';
 
 # configured tag handlers table
 my %TAG_HANDLER_CONFIG_TABLE = (
