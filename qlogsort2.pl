@@ -486,12 +486,33 @@ my $DISSECT_OUTPUT_FILE_NAME;
 my @DISSECT_FILTER  = ();
 my @SUBSTITUTE_QMI  = ();
 
+sub handle_sig {
+    print STDERR "Terminate on $!, cleanup!";
+    qcat_finit();
+    exit 0;
+}
+
 sub qcat_init {
     return if $QCAT_APP;
+
+    if($^O ne "linux") {
+        print STDERR "ERROR: This program currently only support QMI dissection on linux!";
+        return;
+    }
 
     $QCAT_APP = newQCAT6Application();
     if(! $QCAT_APP) {
         print STDERR "ERROR: Unable to initialize QCAT, disabling QMI dissection!\n";
+        return;
+    }
+
+    use sigtrap 'handler' => \&handle_sig, 'normal-signals';
+}
+
+sub qcat_finit {
+    if($QCAT_APP) {
+        $QCAT_APP->Exit();
+        $QCAT_APP = 0;
     }
 }
 
@@ -879,8 +900,9 @@ sub handle_qmi {
         $QMI_BLOCKS{$line{"tid"}}->{"accumu_len"} += scalar @bytes;
     } 
 
-    if ($QMI_BLOCKS{$line{"tid"}}->{"total_len"} == 0 ||
-        $QMI_BLOCKS{$line{"tid"}}->{"total_len"}  <=
+    if (! defined $QMI_BLOCKS{$line{"tid"}}->{"total_len"}  ||
+        $QMI_BLOCKS{$line{"tid"}}->{"total_len"} == 0       ||
+        $QMI_BLOCKS{$line{"tid"}}->{"total_len"} <=
         $QMI_BLOCKS{$line{"tid"}}->{"accumu_len"}) {
         flush_qmi_block($QMI_BLOCKS{$line{"tid"}}, $_config);
         delete $QMI_BLOCKS{$line{"tid"}};
@@ -1257,9 +1279,6 @@ sub main {
 exit main();
 
 END {
-    if($QCAT_APP) {
-        $QCAT_APP->Exit();
-        $QCAT_APP = 0;
-    }
+    qcat_finit();
 }
 
