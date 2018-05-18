@@ -29,9 +29,7 @@ use FindBin;
 use File::Temp qw/ tempfile /;
 use Getopt::Long;
 use Pod::Usage;
-
-use QCATDBus;
-
+use Module::Load;
 
 =pod
 
@@ -84,14 +82,42 @@ my $DISSECT_OUTPUT_FILE_NAME;
 my $UI_DISSECT_INPUT;
 my $UI_DISSECT_OUTPUT;
 
+my $ExpOLEError = "NONE";
+
+sub ole_warn_handler {
+    if($QCAT_APP) {
+        print "$QCAT_APP->{LastError}\n";
+    }
+
+    die "Unexpected OLE Error\n$_[0]\n" if $ExpOLEError eq "NONE";
+    die "Wrong OLE Error ($ExpOLEError)\n$_[0]\n" if ($_[0] !~ $ExpOLEError);
+
+    $ExpOLEError = "NONE";
+}
+
 sub qcat_init {
     return if $QCAT_APP;
 
-    $QCAT_APP = newQCAT6Application();
-    if(! $QCAT_APP) {
-        print STDERR "ERROR: Unable to initialize QCAT, abort!\n";
-        exit (-1);
+    if($^O eq 'linux') {
+        autoload "QCATDBus";
+
+        $QCAT_APP = newQCAT6Application();
+    } elsif ($^O eq 'MSWin32') {
+        autoload Win32::OLE;
+        autoload Win32::OLE::Variant;
+        autoload Win32::OLE::Variant, qw/VT_UI1/;
+
+        Win32::OLE->Option(Warn => \&ole_warn_handler);
+
+        $QCAT_APP = new Win32::OLE 'QCAT6.Application';
+    } else {
+        return (-1, "Unknown OS!")
     }
+    if(! $QCAT_APP) {
+        return (-1, "ERROR:Unable to initialize QCAT!");
+    }
+
+    return (0, "SUCCESS");
 }
 
 sub qcat_finit {
@@ -103,11 +129,16 @@ sub qcat_finit {
 
 
 sub append_dissected_qmi_line {
-    my ($line) = @_;
+    my ($line, $raw) = @_;
     my $num;
 
     if(! defined $UI_DISSECT_OUTPUT) {
         print $line,"\n";
+        return;
+    }
+
+    if($raw) {
+        $UI_DISSECT_OUTPUT->insert("end", $line . "\n", 'raw');
         return;
     }
 
@@ -163,9 +194,73 @@ sub append_dissected_qmi {
     }while(<$fd>);
 }
 
+sub do_dissect_qmi_linux {
+    my ($packet) = @_;
+    my $tmpfs       = "/dev/shm";
+
+    if( -d $tmpfs) {
+        ($DISSECT_INPUT_FILE_HANDLE, $DISSECT_INPUT_FILE_NAME) = tempfile(DIR => $tmpfs, SUFFIX => ".dlf");
+        ($DISSECT_OUTPUT_FILE_HANDLE, $DISSECT_OUTPUT_FILE_NAME) = tempfile(DIR => $tmpfs, SUFFIX => ".txt");
+    } else {
+        ($DISSECT_INPUT_FILE_HANDLE, $DISSECT_INPUT_FILE_NAME) = tempfile(SUFFIX => ".dlf");
+        ($DISSECT_OUTPUT_FILE_HANDLE, $DISSECT_OUTPUT_FILE_NAME) = tempfile(SUFFIX => ".txt");
+    }
+
+    if(! $DISSECT_INPUT_FILE_HANDLE ||
+       ! $DISSECT_INPUT_FILE_NAME   ||
+       ! $DISSECT_OUTPUT_FILE_HANDLE||
+       ! $DISSECT_OUTPUT_FILE_NAME) {
+        append_dissected_qmi_line("DISSECT_QMI:Unable to initialize temp file to dissect qmi!");
+        return;
+    }
+
+    binmode $DISSECT_INPUT_FILE_HANDLE;
+    print $DISSECT_INPUT_FILE_HANDLE $packet;
+
+    # need to close first before qcat open it
+    close $DISSECT_INPUT_FILE_HANDLE;
+    close $DISSECT_OUTPUT_FILE_HANDLE;
+
+    do{
+        if(! $QCAT_APP->Process($DISSECT_INPUT_FILE_NAME, $DISSECT_OUTPUT_FILE_NAME, 0, 1)) {
+            my $err = $QCAT_APP->LastError();
+            append_dissected_qmi_line($err);
+            last;
+        }
+
+        if(! open($DISSECT_OUTPUT_FILE_HANDLE, '<', $DISSECT_OUTPUT_FILE_NAME)) {
+            append_dissected_qmi_line("DISSECT_QMI:Failed to open file to read qmi!");
+            last;
+        }
+
+        append_dissected_qmi($DISSECT_OUTPUT_FILE_HANDLE);
+
+        close $DISSECT_OUTPUT_FILE_HANDLE;
+    }while(0);
+
+    unlink $DISSECT_INPUT_FILE_NAME;
+    unlink $DISSECT_OUTPUT_FILE_NAME;
+}
+
+sub do_dissect_qmi_win32 {
+    my ($packet) = @_;
+    my $var = Variant(17, $packet);
+
+    $QCAT_APP->{Model} = 165;
+    my $obj = $QCAT_APP -> ProcessPacket($var);
+
+    if(! defined $obj) {
+        append_dissected_qmi_line($QCAT_APP->{LastError}, 1);
+    } else {
+        my @lines = split /\n/, $obj->Text();
+        foreach (@lines) {
+            append_dissected_qmi_line($_);
+        }
+    }
+}
+
 sub do_dissect_qmi {
     my ($lines)     = @_;
-    my $tmpfs       = "/dev/shm";
     my $ver         = 2;    # currently, only version 2 supported
     my $ctrl_flag   = 0;
     my $major       = 1;
@@ -180,6 +275,8 @@ sub do_dissect_qmi {
     use integer;
 
     for (my $i = 0; $i < @$lines; ++$i) {
+        append_dissected_qmi_line($lines->[$i], 1);
+
         my ($qmi_version, $msg_len, $srv_id, $msg_id, $tx_id, $msg_type) = (
             $lines->[$i]
             =~
@@ -214,10 +311,17 @@ sub do_dissect_qmi {
             $major = 2;
         }
 
+        $msg_body = "";
         for(++$i; $i < @$lines; ++$i) {
+            append_dissected_qmi_line($lines->[$i], 1);
+
             $lines->[$i] =~ s/.*://;
             $lines->[$i] =~ s/\s+//g;
             $msg_body .= $lines->[$i];
+
+            if(length($msg_body) / 2 >= $msg_len) {
+                last;
+            }
         }
 
         if($msg_len != length($msg_body) / 2) {
@@ -252,50 +356,13 @@ sub do_dissect_qmi {
             $packet .= pack 'H*',$msg_body;
         }
 
-        if( -d $tmpfs) {
-            ($DISSECT_INPUT_FILE_HANDLE, $DISSECT_INPUT_FILE_NAME) = tempfile(DIR => $tmpfs, SUFFIX => ".dlf");
-            ($DISSECT_OUTPUT_FILE_HANDLE, $DISSECT_OUTPUT_FILE_NAME) = tempfile(DIR => $tmpfs, SUFFIX => ".txt");
+        if($^O eq 'linux') {
+            do_dissect_qmi_linux($packet);
+        } elsif ($^O eq 'MSWin32') {
+            do_dissect_qmi_win32($packet);
         } else {
-            ($DISSECT_INPUT_FILE_HANDLE, $DISSECT_INPUT_FILE_NAME) = tempfile(SUFFIX => ".dlf");
-            ($DISSECT_OUTPUT_FILE_HANDLE, $DISSECT_OUTPUT_FILE_NAME) = tempfile(SUFFIX => ".txt");
+            append_dissected_qmi_line("Unknown or unsupported OS!", 1);
         }
-
-        if(! $DISSECT_INPUT_FILE_HANDLE ||
-           ! $DISSECT_INPUT_FILE_NAME   ||
-           ! $DISSECT_OUTPUT_FILE_HANDLE||
-           ! $DISSECT_OUTPUT_FILE_NAME) {
-            append_dissected_qmi_line("DISSECT_QMI:Unable to initialize temp file to dissect qmi!");
-            return;
-        }
-
-        binmode $DISSECT_INPUT_FILE_HANDLE;
-        print $DISSECT_INPUT_FILE_HANDLE $packet;
-
-        # need to close first before qcat open it
-        close $DISSECT_INPUT_FILE_HANDLE;
-        close $DISSECT_OUTPUT_FILE_HANDLE;
-
-        do{
-            if(! $QCAT_APP->Process($DISSECT_INPUT_FILE_NAME, $DISSECT_OUTPUT_FILE_NAME, 0, 1)) {
-                my $err = $QCAT_APP->LastError();
-                append_dissected_qmi_line($err);
-                last;
-            }
-
-            if(! open($DISSECT_OUTPUT_FILE_HANDLE, '<', $DISSECT_OUTPUT_FILE_NAME)) {
-                append_dissected_qmi_line("DISSECT_QMI:Failed to open file to read qmi!");
-                last;
-            }
-
-            append_dissected_qmi($DISSECT_OUTPUT_FILE_HANDLE);
-
-            close $DISSECT_OUTPUT_FILE_HANDLE;
-        }while(0);
-
-        unlink $DISSECT_INPUT_FILE_NAME;
-        unlink $DISSECT_OUTPUT_FILE_NAME;
-
-        last;
     }
 }
 
@@ -324,10 +391,11 @@ sub on_dissect {
 
     do_dissect_qmi(\@input);
 
-    $UI_DISSECT_OUTPUT->configure(-state   => "disabled");
+    #$UI_DISSECT_OUTPUT->configure(-state   => "disabled");
 }
 
 sub launch_ui {
+    my ($err, $msg) = @_;
     my $mw = MainWindow->new;
 
     $mw->geometry("800x800");
@@ -337,7 +405,7 @@ sub launch_ui {
         ->pack(-side        => "top",
                -fill        => "x");
 
-    $top_fm->Label(-text    => "QMI logs:")
+    my $dissect_btn = $top_fm->Label(-text    => "QMI logs:")
         ->pack(-side        => "left");
 
     $top_fm->Button(-text   => "Dissect",
@@ -351,8 +419,11 @@ sub launch_ui {
     my $top1_top_fm = $top1_fm->Frame()
         ->pack(-side        => "top",
                -fill        => "x");
-    my $input = $top1_top_fm->Text(-borderwidth     => 5,
-                                   -foreground      => "black")
+    my $input = $top1_top_fm->Scrolled('Text',
+                                       -scrollbars      => "ose",
+                                       -wrap            => "none",
+                                       -borderwidth     => 5,
+                                       -foreground      => "black")
         ->pack(-side        => "top",
                -fill        => "x");
 
@@ -366,17 +437,27 @@ sub launch_ui {
     $bottom1_bottom_top_fm->Label(-text => "Dissect:")
         ->pack(-side        => "left");
 
-    my $output = $top1_bottom_fm->Text(-state       => "disabled",
-                                       -borderwidth => 5,
-                                       -font        => "r16",
-                                       -foreground  => "grey")
+    my $output = $top1_bottom_fm->Scrolled('Text',
+                                           -scrollbars  => "ose",
+                                           -wrap        => "none",
+                                           -state       => "normal",
+                                           -borderwidth => 5,
+                                           -font        => "r14",
+                                           -foreground  => "grey")
         ->pack(-side        => "bottom",
                -fill        => "both");
 
+    $output->tagConfigure('raw', -foreground => "black");
+    $output->tagConfigure('error', -foreground => "red");
     $output->tagConfigure('number', -underline => 1);
-    $output->configure(-state   => "normal");
-    $output->insert("end", "Dissected QMI will be displayed here!");
-    $output->configure(-state   => "disabled");
+    if($err) {
+        $output->insert("end", $msg . "\n", 'error');
+        #$dissect_btn->configure(-state => "disabled");
+    } else {
+        $output->configure(-state   => "normal");
+        $output->insert("end", "Dissected QMI will be displayed here!");
+        #$output->configure(-state   => "disabled");
+    }
 
     $UI_DISSECT_INPUT   = $input;
     $UI_DISSECT_OUTPUT  = $output;
@@ -418,12 +499,14 @@ sub main {
 
     $CONDENSE_QMI = $OPT_CONDENSE_QMI;
 
-    qcat_init();
+    my ($err, $msg) = qcat_init();
 
     if(! $OPT_CLI) {
-        launch_ui();
-    } else {
+        launch_ui($err, $msg);
+    } elsif (! $err) {
         dissect_qmi();
+    } else {
+        print STDERR $msg,"\n";
     }
 
     qcat_finit();
@@ -434,9 +517,6 @@ sub main {
 exit main;
 
 END {
-    if($QCAT_APP) {
-        $QCAT_APP->Exit();
-        $QCAT_APP = 0;
-    }
+    qcat_finit();
 }
 
