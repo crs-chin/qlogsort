@@ -70,7 +70,7 @@ Show manual of this executable
 
 =cut
 
-my $VERSION = 'version 1.0 (c) crs.chin@gmain.com';
+my $VERSION = 'version 1.1 (c) crs.chin@gmain.com/cross_qin@htc.com';
 
 my $QCAT_APP;
 my $CONDENSE_QMI = 0;
@@ -414,7 +414,7 @@ sub launch_ui {
     my $input = $mw->Scrolled('Text',
                               -scrollbars   => "ose",
                               -wrap         => "none",
-                              -height       => 20,
+                              -height       => 15,
                               -borderwidth  => 5,
                               -foreground   => "black")
         ->pack(-side        => "top",
@@ -448,11 +448,12 @@ sub launch_ui {
                                -scrollbars  => "ose",
                                -wrap        => "none",
                                -state       => "normal",
-                               -height      => 20,
+                               -height      => 15,
                                -borderwidth => 5,
                                -font        => "r14",
                                -foreground  => "blue")
         ->pack(-side        => "top",
+               -expand      => 1,
                -fill        => "both");
 
     $output->tagConfigure('tips', -foreground => "grey");
