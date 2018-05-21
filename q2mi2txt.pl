@@ -385,17 +385,14 @@ sub on_dissect {
         push @input, $UI_DISSECT_INPUT->get("$i.0", "$i.end");
     }
 
-    $UI_DISSECT_OUTPUT->configure(-state        => "normal",
-                                  -foreground   => "blue");
     $UI_DISSECT_OUTPUT->delete("1.0", "end");
 
     do_dissect_qmi(\@input);
-
-    #$UI_DISSECT_OUTPUT->configure(-state   => "disabled");
 }
 
 sub launch_ui {
     my ($err, $msg) = @_;
+    my $OPT_CONDENSE_QMI = 0;
     my $mw = MainWindow->new;
 
     $mw->geometry("800x800");
@@ -415,38 +412,58 @@ sub launch_ui {
                -anchor      => "e");
 
     my $input = $mw->Scrolled('Text',
-                              -scrollbars      => "ose",
-                              -wrap            => "none",
-                              -borderwidth     => 5,
-                              -foreground      => "black")
+                              -scrollbars   => "ose",
+                              -wrap         => "none",
+                              -height       => 20,
+                              -borderwidth  => 5,
+                              -foreground   => "black")
         ->pack(-side        => "top",
                -fill        => "x");
 
-    $mw->Label(-text => "Dissect:")
+    my $top1_fm = $mw->Frame()
         ->pack(-side        => "top",
+               -fill        => "x");
+
+    $top1_fm->Label(-text   => "Dissect:")
+        ->pack(-side        => "left",
                -anchor      => "w",
                -fill        => "none");
+
+    $top1_fm->Checkbutton(-text             => "Condensed Format",
+                          -variable         => \$OPT_CONDENSE_QMI,
+                          -command          => sub {
+                              if($OPT_CONDENSE_QMI) {
+                                  $CONDENSE_QMI = 2;
+                              } else {
+                                  $CONDENSE_QMI = 0;
+                              }
+
+                              on_dissect;
+                          })
+        ->pack(-side        => "right",
+               -anchor      => "e",
+               -ipadx       => 10);
 
     my $output = $mw->Scrolled('Text',
                                -scrollbars  => "ose",
                                -wrap        => "none",
                                -state       => "normal",
+                               -height      => 20,
                                -borderwidth => 5,
                                -font        => "r14",
-                               -foreground  => "grey")
+                               -foreground  => "blue")
         ->pack(-side        => "top",
                -fill        => "both");
 
+    $output->tagConfigure('tips', -foreground => "grey");
     $output->tagConfigure('raw', -foreground => "black");
     $output->tagConfigure('error', -foreground => "red");
     $output->tagConfigure('number', -underline => 1);
+
     if($err) {
         $output->insert("end", $msg . "\n", 'error');
-        #$dissect_btn->configure(-state => "disabled");
     } else {
-        $output->configure(-state   => "normal");
-        $output->insert("end", "Dissected QMI will be displayed here!");
-        #$output->configure(-state   => "disabled");
+        $output->insert("end", "Dissected QMI will be displayed here!", 'tips');
     }
 
     $UI_DISSECT_INPUT   = $input;
