@@ -405,46 +405,36 @@ sub launch_ui {
         ->pack(-side        => "top",
                -fill        => "x");
 
-    my $dissect_btn = $top_fm->Label(-text    => "QMI logs:")
-        ->pack(-side        => "left");
+    $top_fm->Label(-text    => "QMI logs:")
+        ->pack(-side        => "left",
+               -anchor      => "w" );
 
     $top_fm->Button(-text   => "Dissect",
-                    -command=> \&on_dissect)
-        ->pack(-side        => "right");
+                -command=> \&on_dissect)
+        ->pack(-side        => "right",
+               -anchor      => "e");
 
-    my $top1_fm = $mw->Frame()
+    my $input = $mw->Scrolled('Text',
+                              -scrollbars      => "ose",
+                              -wrap            => "none",
+                              -borderwidth     => 5,
+                              -foreground      => "black")
         ->pack(-side        => "top",
                -fill        => "x");
 
-    my $top1_top_fm = $top1_fm->Frame()
+    $mw->Label(-text => "Dissect:")
         ->pack(-side        => "top",
-               -fill        => "x");
-    my $input = $top1_top_fm->Scrolled('Text',
-                                       -scrollbars      => "ose",
-                                       -wrap            => "none",
-                                       -borderwidth     => 5,
-                                       -foreground      => "black")
+               -anchor      => "w",
+               -fill        => "none");
+
+    my $output = $mw->Scrolled('Text',
+                               -scrollbars  => "ose",
+                               -wrap        => "none",
+                               -state       => "normal",
+                               -borderwidth => 5,
+                               -font        => "r14",
+                               -foreground  => "grey")
         ->pack(-side        => "top",
-               -fill        => "x");
-
-    my $top1_bottom_fm = $top1_fm->Frame()
-        ->pack(-side        => "bottom",
-               -fill        => "x");
-
-    my $bottom1_bottom_top_fm = $top1_bottom_fm->Frame()
-        ->pack(-side        => "top",
-               -fill        => "x");
-    $bottom1_bottom_top_fm->Label(-text => "Dissect:")
-        ->pack(-side        => "left");
-
-    my $output = $top1_bottom_fm->Scrolled('Text',
-                                           -scrollbars  => "ose",
-                                           -wrap        => "none",
-                                           -state       => "normal",
-                                           -borderwidth => 5,
-                                           -font        => "r14",
-                                           -foreground  => "grey")
-        ->pack(-side        => "bottom",
                -fill        => "both");
 
     $output->tagConfigure('raw', -foreground => "black");
