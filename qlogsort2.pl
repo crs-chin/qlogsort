@@ -924,11 +924,22 @@ sub handle_tag {
 }
 
 
-# sample: 05-04 14:09:48.510   888  2225 D TAG  : log content blah blah...
+# sample 1: 05-04 14:09:48.510   888  2225 D TAG  : log content blah blah...
+# sample 2: 07-09 13:53:24.319 D/QMI_FW  ( 1206): log content blah blah
 sub log_dissect {
+    my ($line) = @_;
     my ($_date, $_time, $_pid, $_tid, $_level, $_tag, $_log) = (
-            pop =~ /^\s*(\d+-\d+)\s+(\d+:\d+:\d+\.\d+)\s+(\d+)\s+(\d+)\s+([VDIEWF])\s+([^:]+)\s*:\s*(.*)$/
+            $line =~ /^\s*(\d+-\d+)\s+(\d+:\d+:\d+\.\d+)\s+(\d+)\s+(\d+)\s+([VDIEWF])\s+([^:]+)\s*:\s*(.*)$/
         );
+
+    if(! defined $_date) {
+        ($_date, $_time, $_level, $_tag, $_pid, $_log) = (
+            $line =~ /^\s*(\d+-\d+)\s+(\d+:\d+:\d+\.\d+)\s+([VDIEWF])\/([^:]+)\s*\(\s*(\d+)\s*\)\s*:\s*(.*)$/
+            );
+
+        # tid needs to exist to work
+        $_tid = -1;
+    }
 
     return (type    =>  "log",
             date    =>  $_date,
