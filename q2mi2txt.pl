@@ -142,19 +142,19 @@ sub append_dissected_qmi_line {
         return;
     }
 
-    if($line =~ /(.*)(0[xX][\dA-Fa-f]+)(.*)/) {
-        $num =  $2 . sprintf "\[%d\]", hex($2);
-        $UI_DISSECT_OUTPUT->insert("end", $1);
-        $UI_DISSECT_OUTPUT->insert("end", $num, 'number');
-        $UI_DISSECT_OUTPUT->insert("end", $3 . "\n");
-    } elsif($line =~ /([^\d]*)([\d]+)(.*)/) {
-        $num =  $2 . sprintf "\[0x%X\]", $2;
-        $UI_DISSECT_OUTPUT->insert("end", $1);
-        $UI_DISSECT_OUTPUT->insert("end", $num, 'number');
-        $UI_DISSECT_OUTPUT->insert("end", $3 . "\n");
-    } else {
+    # if($line =~ /(.*)(0[xX][\dA-Fa-f]+)(.*)/) {
+    #     $num =  $2 . sprintf "\[%d\]", hex($2);
+    #     $UI_DISSECT_OUTPUT->insert("end", $1);
+    #     $UI_DISSECT_OUTPUT->insert("end", $num, 'number');
+    #     $UI_DISSECT_OUTPUT->insert("end", $3 . "\n");
+    # } elsif($line =~ /([^\d]*)([\d]+)(.*)/) {
+    #     $num =  $2 . sprintf "\[0x%X\]", $2;
+    #     $UI_DISSECT_OUTPUT->insert("end", $1);
+    #     $UI_DISSECT_OUTPUT->insert("end", $num, 'number');
+    #     $UI_DISSECT_OUTPUT->insert("end", $3 . "\n");
+    # } else {
         $UI_DISSECT_OUTPUT->insert("end", $line . "\n");
-    }
+    # }
 }
 
 sub append_dissected_qmi {
@@ -315,12 +315,15 @@ sub do_dissect_qmi {
         for(++$i; $i < @$lines; ++$i) {
             append_dissected_qmi_line($lines->[$i], 1);
 
-            $lines->[$i] =~ s/.*://;
-            $lines->[$i] =~ s/\s+//g;
-            $msg_body .= $lines->[$i];
+            my ($_dummy, $msg_line) = ( $lines->[$i] =~ /.*(QC-QMI|QMI_FW)\s*:\s*(([0-9a-fA-F][0-9a-fA-F]\s*)+)$/ );
 
-            if(length($msg_body) / 2 >= $msg_len) {
-                last;
+            if($msg_line) {
+                $msg_line =~ s/\s+//g;
+                $msg_body .= $msg_line;
+
+                if(length($msg_body) / 2 >= $msg_len) {
+                    last;
+                }
             }
         }
 
