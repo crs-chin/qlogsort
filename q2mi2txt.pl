@@ -70,7 +70,7 @@ Show manual of this executable
 
 =cut
 
-my $VERSION = 'version 1.1 (c) crs.chin@gmain.com/cross_qin@htc.com';
+my $VERSION = 'version 1.1 (c) crs.chin@gmail.com/cross_qin@htc.com';
 
 my $QCAT_APP;
 my $CONDENSE_QMI = 0;
@@ -399,7 +399,7 @@ sub launch_ui {
     my $mw = MainWindow->new;
 
     $mw->geometry("800x800");
-    $mw->title("QMI Parser For UNIX");
+    $mw->title("Advanced QMI Analyzer");
 
     my $top_fm = $mw->Frame()
         ->pack(-side        => "top",
@@ -458,6 +458,13 @@ sub launch_ui {
         ->pack(-side        => "top",
                -expand      => 1,
                -fill        => "both");
+
+    $mw->Label(-text        => $VERSION,
+               -foreground  => "grey")
+        ->pack(-side        => "top",
+               -expand      => 0,
+               -anchor      => "e");
+
 
     $output->tagConfigure('tips', -foreground => "grey");
     $output->tagConfigure('raw', -foreground => "black");
