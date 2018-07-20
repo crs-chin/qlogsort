@@ -280,7 +280,7 @@ sub do_dissect_qmi {
         my ($qmi_version, $msg_len, $srv_id, $msg_id, $tx_id, $msg_type) = (
             $lines->[$i]
             =~
-            /.*(QC-QMI|QMI_FW).*QMI_Msg Len:\s*\[(\d+)\].*\s*Serv_ID:\s*\[\w+\(0x([0-9a-fA-F]+)\)\].*\s*Msg_ID:\s*\[[\w<>]+\(0x([0-9a-fA-F]+)\)\].*Trans_ID:\s*\[(\d+)\]\s*\[(Request|Response|Indication)\]/
+            /.*(QC-QMI|QMI_FW).*QMI_Msg Len:\s*\[(\d+)\].*\s*Serv_ID:\s*\[[\w<>]+\(0x([0-9a-fA-F]+)\)\].*\s*Msg_ID:\s*\[[\w<>]+\(0x([0-9a-fA-F]+)\)\].*Trans_ID:\s*\[(\d+)\]\s*\[(.+)\]/
         );
 
         if(! $qmi_version   ||
@@ -293,6 +293,7 @@ sub do_dissect_qmi {
             next;
         }
 
+      QMI_START:
         $srv_id = hex($srv_id);
         $msg_id = hex($msg_id);
 
@@ -304,7 +305,7 @@ sub do_dissect_qmi {
             $ctrl_flag = 2;
         } else {
             append_dissected_qmi_line("DISSECT_QMI:Unrecognized message type \"$msg_type\"");
-            return;
+            next;
         }
 
         if($srv_id == 9) {       # change major to 2 for service voice(0x9)
@@ -313,17 +314,37 @@ sub do_dissect_qmi {
 
         $msg_body = "";
         for(++$i; $i < @$lines; ++$i) {
-            append_dissected_qmi_line($lines->[$i], 1);
-
             my ($_dummy, $msg_line) = ( $lines->[$i] =~ /.*(QC-QMI|QMI_FW)\s*:\s*(([0-9a-fA-F][0-9a-fA-F]\s*)+)$/ );
 
             if($msg_line) {
+                append_dissected_qmi_line($lines->[$i], 1);
+
                 $msg_line =~ s/\s+//g;
                 $msg_body .= $msg_line;
 
                 if(length($msg_body) / 2 >= $msg_len) {
                     last;
                 }
+            } else {
+                ($qmi_version, $msg_len, $srv_id, $msg_id, $tx_id, $msg_type) = (
+                    $lines->[$i]
+                    =~
+                    /.*(QC-QMI|QMI_FW).*QMI_Msg Len:\s*\[(\d+)\].*\s*Serv_ID:\s*\[[\w<>]+\(0x([0-9a-fA-F]+)\)\].*\s*Msg_ID:\s*\[[\w<>]+\(0x([0-9a-fA-F]+)\)\].*Trans_ID:\s*\[(\d+)\]\s*\[(.+)\]/
+                    );
+
+                if($qmi_version   &&
+                   $msg_len       &&
+                   $srv_id        &&
+                   $msg_id        &&
+                   $tx_id         &&
+                   $msg_type)
+                {
+                    append_dissected_qmi_line("DISSECT_QMI:New qmi found before previous ended!");
+                    append_dissected_qmi_line($lines->[$i], 1);
+                    goto QMI_START;
+                }
+
+                append_dissected_qmi_line($lines->[$i], 1);
             }
         }
 
