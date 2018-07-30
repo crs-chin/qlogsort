@@ -326,19 +326,26 @@ sub do_dissect_qmi {
                     last;
                 }
             } else {
-                ($qmi_version, $msg_len, $srv_id, $msg_id, $tx_id, $msg_type) = (
+                my ($_qmi_version, $_msg_len, $_srv_id, $_msg_id, $_tx_id, $_msg_type) = (
                     $lines->[$i]
                     =~
                     /.*(QC-QMI|QMI_FW).*QMI_Msg Len:\s*\[(\d+)\].*\s*Serv_ID:\s*\[[\w<>]+\(0x([0-9a-fA-F]+)\)\].*\s*Msg_ID:\s*\[[\w<>]+\(0x([0-9a-fA-F]+)\)\].*Trans_ID:\s*\[(\d+)\]\s*\[(.+)\]/
                     );
 
-                if($qmi_version   &&
-                   $msg_len       &&
-                   $srv_id        &&
-                   $msg_id        &&
-                   $tx_id         &&
-                   $msg_type)
+                if($_qmi_version   &&
+                   $_msg_len       &&
+                   $_srv_id        &&
+                   $_msg_id        &&
+                   $_tx_id         &&
+                   $_msg_type)
                 {
+                    $qmi_version= $_qmi_version;
+                    $msg_len    = $_msg_len;
+                    $srv_id     = $_srv_id;
+                    $msg_id     = $_msg_id;
+                    $tx_id      = $_tx_id;
+                    $msg_type   = $_msg_type;
+
                     append_dissected_qmi_line("DISSECT_QMI:New qmi found before previous ended!");
                     append_dissected_qmi_line($lines->[$i], 1);
                     goto QMI_START;
@@ -350,7 +357,7 @@ sub do_dissect_qmi {
 
         if($msg_len != length($msg_body) / 2) {
             append_dissected_qmi_line("DISSECT_QMI:Bad qmi, length mis-match!");
-            return;
+            next;
         }
 
         if($qmi_version eq "QC-QMI") {
