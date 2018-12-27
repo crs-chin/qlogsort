@@ -70,8 +70,10 @@ Show manual of this executable
 
 =cut
 
-my $VERSION = 'version 1.1 (c) crs.chin@gmail.com/cross_qin@htc.com';
+my $VERSION = 'version 2.0 (c) crs.chin@gmail.com/cross_qin@htc.com';
 
+
+my %QMI_CACHE = ();
 my $QCAT_APP;
 my $CONDENSE_QMI = 0;
 my $DISSECT_INPUT_FILE_HANDLE;
@@ -259,8 +261,44 @@ sub do_dissect_qmi_win32 {
     }
 }
 
-sub do_dissect_qmi {
-    my ($lines)     = @_;
+sub fetch_qmi_rec {
+    my ($pid, $tid) = @_;
+
+    if(exists $QMI_CACHE{$pid}) {
+        my $pid_rec = $QMI_CACHE{$pid};
+
+        if(exists $$pid_rec{$tid}) {
+            return $$pid_rec{$tid};
+        }
+    }
+    return undef;
+}
+
+sub put_qmi_rec {
+    my ($pid, $tid, $rec) = @_;
+
+    if(! exists $QMI_CACHE{$pid}) {
+        $QMI_CACHE{$pid} = {};
+    }
+
+    my $pid_rec = $QMI_CACHE{$pid};
+    $$pid_rec{$tid} = $rec;
+}
+
+sub rm_qmi_rec {
+    my ($pid, $tid) = @_;
+
+    if(exists $QMI_CACHE{$pid}) {
+        my $pid_rec = $QMI_CACHE{$pid};
+
+        if(exists $$pid_rec{$tid}) {
+            delete $$pid_rec{$tid};
+        }
+    }
+}
+
+sub do_dissect_qmi_rec {
+    my ($rec)       = @_;
     my $ver         = 2;    # currently, only version 2 supported
     my $ctrl_flag   = 0;
     my $major       = 1;
@@ -268,23 +306,91 @@ sub do_dissect_qmi {
     my $con_handle  = 0;
     my $dummy_qc_qmi= "91130000000000000000";
     my $dummy_qmi_fw= "44150000000000000000";
-    my $msg_body;
     my $total_len;
     my $packet;
+    my $version     = $$rec{version};
+    my $msg_len     = $$rec{length};
+    my $srv_id      = $$rec{srvid};
+    my $msg_id      = $$rec{msgid};
+    my $tx_id       = $$rec{txid};
+    my $msg_type    = $$rec{type};
+    my $pdu         = $$rec{pdu};
 
     use integer;
 
-    for (my $i = 0; $i < @$lines; ++$i) {
-        append_dissected_qmi_line($lines->[$i], 1);
+    $srv_id = hex($srv_id);
+    $msg_id = hex($msg_id);
 
-        my ($qmi_version, $msg_len, $srv_id, $msg_id, $tx_id, $msg_type) = (
-            $lines->[$i]
+    if($msg_type eq "Request") {
+        $ctrl_flag = 0;
+    } elsif ($msg_type eq "Response" ) {
+        $ctrl_flag = 1;
+    } elsif ($msg_type eq "Indication") {
+        $ctrl_flag = 2;
+    } else {
+        append_dissected_qmi_line("DISSECT_QMI:Unrecognized message type \"$msg_type\"");
+        return;
+    }
+
+    if($srv_id == 9) {       # change major to 2 for service voice(0x9)
+        $major = 2;
+    }
+
+    if($msg_len != length($pdu) / 2) {
+        append_dissected_qmi_line("DISSECT_QMI:Bad qmi, length mis-match!");
+        return;
+    }
+
+    if($version eq "QC-QMI") {
+        # total(2) + dummy(10) = 12
+        $total_len = 12 + length($pdu) / 2;
+
+        $packet  = pack 'v', $total_len;
+        $packet .= pack 'H*', $dummy_qc_qmi;
+        $packet .= pack 'H*', $pdu;
+    } else {                # QMI_FW
+        # total(2) + dummy(10) + (ver(1) + ctrl_flag(1) + tx_id(2) +
+        # srv_id(4) + major(4) + minor(4) + con_handle(4) + msg_id(4)
+        # + msg_len(4) = 40
+        $total_len = 40 + length($pdu) / 2;
+
+        $packet  = pack 'v', $total_len;
+        $packet .= pack 'H*', $dummy_qmi_fw;
+        $packet .= pack 'C', $ver;
+        $packet .= pack 'C', $ctrl_flag;
+        $packet .= pack 'v', $tx_id;
+        $packet .= pack 'V', $srv_id;
+        $packet .= pack 'V', $major;
+        $packet .= pack 'V', $minor;
+        $packet .= pack 'V', $con_handle;
+        $packet .= pack 'V', $msg_id;
+        $packet .= pack 'V', $msg_len;
+        $packet .= pack 'H*',$pdu;
+    }
+
+    if($^O eq 'linux') {
+        do_dissect_qmi_linux($packet);
+    } elsif ($^O eq 'MSWin32') {
+        do_dissect_qmi_win32($packet);
+    } else {
+        append_dissected_qmi_line("Unknown or unsupported OS!", 1);
+    }
+}
+
+sub do_dissect_qmi {
+    my (%qmi)       = @_;
+    my $body        = $qmi{body};
+    my $qmi_rec     = fetch_qmi_rec($qmi{pid}, $qmi{tid});
+    my ($pdu)       = ( $body =~ /\s*(([0-9a-fA-F][0-9a-fA-F]\s*)+)$/ );
+
+    if(! $pdu) {
+        my ($msg_len, $srv_id, $msg_id, $tx_id, $msg_type) = (
+            $body
             =~
-            /.*(QC-QMI|QMI_FW).*QMI_Msg Len:\s*\[(\d+)\].*\s*Serv_ID:\s*\[[\w<>]+\(0x([0-9a-fA-F]+)\)\].*\s*Msg_ID:\s*\[[\w<>]+\(0x([0-9a-fA-F]+)\)\].*Trans_ID:\s*\[(\d+)\]\s*\[([^\[\]]+)\]/
-        );
+            /.*QMI_Msg Len:\s*\[(\d+)\].*\s*Serv_ID:\s*\[[\w<>]+\(0x([0-9a-fA-F]+)\)\].*\s*Msg_ID:\s*\[[\w<>]+\(0x([0-9a-fA-F]+)\)\].*Trans_ID:\s*\[(\d+)\]\s*\[([^\[\]]+)\]/
+          );
 
-        if(! $qmi_version   ||
-           ! $msg_len       ||
+        if(! $msg_len       ||
            ! $srv_id        ||
            ! $msg_id        ||
            ! $tx_id         ||
@@ -293,106 +399,62 @@ sub do_dissect_qmi {
             next;
         }
 
-      QMI_START:
-        $srv_id = hex($srv_id);
-        $msg_id = hex($msg_id);
+        put_qmi_rec($qmi{pid}, $qmi{tid},
+                    {
+                        pid     => $qmi{pid},
+                        tid     => $qmi{tid},
+                        version => $qmi{version},
+                        length  => $msg_len,
+                        srvid   => $srv_id,
+                        msgid   => $msg_id,
+                        txid    => $tx_id,
+                        type    => $msg_type,
+                        pdu     => "",
+                    });
+        return;
+    }
 
-        if($msg_type eq "Request") {
-            $ctrl_flag = 0;
-        } elsif ($msg_type eq "Response" ) {
-            $ctrl_flag = 1;
-        } elsif ($msg_type eq "Indication") {
-            $ctrl_flag = 2;
-        } else {
-            append_dissected_qmi_line("DISSECT_QMI:Unrecognized message type \"$msg_type\"");
-            next;
+    if(! $qmi_rec) {
+        append_dissected_qmi_line("DISSECT_QMI:Orphaned QMI PDU!");
+        return;
+    }
+
+    $pdu =~ s/\s+//g;
+    $$qmi_rec{pdu} .= $pdu;
+    if(length($$qmi_rec{pdu}) / 2 >= $$qmi_rec{length}) {
+        do_dissect_qmi_rec($qmi_rec);
+        rm_qmi_rec($$qmi_rec{pid}, $$qmi_rec{tid});
+    }
+}
+
+sub filter_qmi {
+    my ($lines)     = @_;
+
+    foreach (@$lines) {
+        append_dissected_qmi_line($_, 1);
+
+        my ($pid, $tid, $qmi_version, $qmi_body) = (
+            $_
+            =~
+            /.*\s+(\d+)\s+(\d+)\s+[VDIEWF]\s+(QC-QMI|QMI_FW)\s+:\s*(.*)$/
+        );
+
+        if(! $qmi_version || ! $qmi_body) {
+            ($qmi_version, $qmi_body) = (
+                $_
+                =~
+                /.*(QC-QMI|QMI_FW)\s+:\s*(.*)$/
+            );
+
+            $pid = -1;
+            $tid = -1;
         }
 
-        if($srv_id == 9) {       # change major to 2 for service voice(0x9)
-            $major = 2;
-        }
-
-        $msg_body = "";
-        for(++$i; $i < @$lines; ++$i) {
-            my ($_dummy, $msg_line) = ( $lines->[$i] =~ /.*(QC-QMI|QMI_FW)\s*:\s*(([0-9a-fA-F][0-9a-fA-F]\s*)+)$/ );
-
-            if($msg_line) {
-                append_dissected_qmi_line($lines->[$i], 1);
-
-                $msg_line =~ s/\s+//g;
-                $msg_body .= $msg_line;
-
-                if(length($msg_body) / 2 >= $msg_len) {
-                    last;
-                }
-            } else {
-                my ($_qmi_version, $_msg_len, $_srv_id, $_msg_id, $_tx_id, $_msg_type) = (
-                    $lines->[$i]
-                    =~
-                    /.*(QC-QMI|QMI_FW).*QMI_Msg Len:\s*\[(\d+)\].*\s*Serv_ID:\s*\[[\w<>]+\(0x([0-9a-fA-F]+)\)\].*\s*Msg_ID:\s*\[[\w<>]+\(0x([0-9a-fA-F]+)\)\].*Trans_ID:\s*\[(\d+)\]\s*\[(.+)\]/
-                    );
-
-                if($_qmi_version   &&
-                   $_msg_len       &&
-                   $_srv_id        &&
-                   $_msg_id        &&
-                   $_tx_id         &&
-                   $_msg_type)
-                {
-                    $qmi_version= $_qmi_version;
-                    $msg_len    = $_msg_len;
-                    $srv_id     = $_srv_id;
-                    $msg_id     = $_msg_id;
-                    $tx_id      = $_tx_id;
-                    $msg_type   = $_msg_type;
-
-                    append_dissected_qmi_line("DISSECT_QMI:New qmi found before previous ended!");
-                    append_dissected_qmi_line($lines->[$i], 1);
-                    goto QMI_START;
-                }
-
-                append_dissected_qmi_line($lines->[$i], 1);
-            }
-        }
-
-        if($msg_len != length($msg_body) / 2) {
-            append_dissected_qmi_line("DISSECT_QMI:Bad qmi, length mis-match!");
-            next;
-        }
-
-        if($qmi_version eq "QC-QMI") {
-            # total(2) + dummy(10) = 12
-            $total_len = 12 + length($msg_body) / 2;
-
-            $packet  = pack 'v', $total_len;
-            $packet .= pack 'H*', $dummy_qc_qmi;
-            $packet .= pack 'H*', $msg_body;
-        } else {                # QMI_FW
-            # total(2) + dummy(10) + (ver(1) + ctrl_flag(1) + tx_id(2) +
-            # srv_id(4) + major(4) + minor(4) + con_handle(4) + msg_id(4)
-            # + msg_len(4) = 40
-            $total_len = 40 + length($msg_body) / 2;
-
-            $packet  = pack 'v', $total_len;
-            $packet .= pack 'H*', $dummy_qmi_fw;
-            $packet .= pack 'C', $ver;
-            $packet .= pack 'C', $ctrl_flag;
-            $packet .= pack 'v', $tx_id;
-            $packet .= pack 'V', $srv_id;
-            $packet .= pack 'V', $major;
-            $packet .= pack 'V', $minor;
-            $packet .= pack 'V', $con_handle;
-            $packet .= pack 'V', $msg_id;
-            $packet .= pack 'V', $msg_len;
-            $packet .= pack 'H*',$msg_body;
-        }
-
-        if($^O eq 'linux') {
-            do_dissect_qmi_linux($packet);
-        } elsif ($^O eq 'MSWin32') {
-            do_dissect_qmi_win32($packet);
-        } else {
-            append_dissected_qmi_line("Unknown or unsupported OS!", 1);
+        if($qmi_version && $qmi_body) {
+            do_dissect_qmi(pid      => $pid,
+                           tid      => $tid,
+                           version  => $qmi_version,
+                           body     => $qmi_body);
         }
     }
 }
@@ -404,7 +466,7 @@ sub dissect_qmi {
         push @lines, $_;
     }
 
-    do_dissect_qmi(\@lines);
+    filter_qmi(\@lines);
 }
 
 sub on_dissect {
@@ -418,7 +480,7 @@ sub on_dissect {
 
     $UI_DISSECT_OUTPUT->delete("1.0", "end");
 
-    do_dissect_qmi(\@input);
+    filter_qmi(\@input);
 }
 
 sub launch_ui {
