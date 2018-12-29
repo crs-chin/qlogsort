@@ -70,7 +70,7 @@ Show manual of this executable
 
 =cut
 
-my $VERSION = 'version 2.0 (c) crs.chin@gmail.com/cross_qin@htc.com';
+my $VERSION = 'version 2.1 (c) crs.chin@gmail.com/cross_qin@htc.com';
 
 
 my %QMI_CACHE = ();
@@ -504,16 +504,25 @@ sub launch_ui {
         ->pack(-side        => "right",
                -anchor      => "e");
 
-    my $input = $mw->Scrolled('Text',
-                              -scrollbars   => "ose",
-                              -wrap         => "none",
-                              -height       => 15,
-                              -borderwidth  => 5,
-                              -foreground   => "black")
+    my $paned = $mw->Panedwindow(-orient  => "v")
         ->pack(-side        => "top",
-               -fill        => "x");
+               -fill        => "both",
+               -expand      => 1);
 
-    my $top1_fm = $mw->Frame()
+    my $upper = $paned->Frame();
+    my $down = $paned->Frame();
+
+    my $input = $upper->Scrolled('Text',
+                                 -scrollbars   => "ose",
+                                 -wrap         => "none",
+                                 -height       => 15,
+                                 -borderwidth  => 5,
+                                 -foreground   => "black")
+        ->pack(-side        => "top",
+               -fill        => "both",
+               -expand      => 1);
+
+    my $top1_fm = $down->Frame()
         ->pack(-side        => "top",
                -fill        => "x");
 
@@ -537,20 +546,20 @@ sub launch_ui {
                -anchor      => "e",
                -ipadx       => 10);
 
-    my $output = $mw->Scrolled('Text',
-                               -scrollbars  => "ose",
-                               -wrap        => "none",
-                               -state       => "normal",
-                               -height      => 15,
-                               -borderwidth => 5,
-                               -font        => "r14",
-                               -foreground  => "blue")
+    my $output = $down->Scrolled('Text',
+                                 -scrollbars  => "ose",
+                                 -wrap        => "none",
+                                 -state       => "normal",
+                                 -height      => 15,
+                                 -borderwidth => 5,
+                                 -font        => "r14",
+                                 -foreground  => "blue")
         ->pack(-side        => "top",
                -expand      => 1,
                -fill        => "both");
 
-    $mw->Label(-text        => $VERSION,
-               -foreground  => "grey")
+    $down->Label(-text        => $VERSION,
+                 -foreground  => "grey")
         ->pack(-side        => "top",
                -expand      => 0,
                -anchor      => "e");
@@ -560,6 +569,9 @@ sub launch_ui {
     $output->tagConfigure('raw', -foreground => "black");
     $output->tagConfigure('error', -foreground => "red");
     $output->tagConfigure('number', -underline => 1);
+
+    $paned->add($upper);
+    $paned->add($down);
 
     if($err) {
         $output->insert("end", $msg . "\n", 'error');
