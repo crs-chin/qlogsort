@@ -390,12 +390,7 @@ sub do_dissect_qmi {
             /.*QMI_Msg Len:\s*\[(\d+)\].*\s*Serv_ID:\s*\[[\w<>]+\(0x([0-9a-fA-F]+)\)\].*\s*Msg_ID:\s*\[[\w<>]+\(0x([0-9a-fA-F]+)\)\].*Trans_ID:\s*\[(\d+)\]\s*\[([^\[\]]+)\]/
           );
 
-        if(! $msg_len       ||
-           ! $srv_id        ||
-           ! $msg_id        ||
-           ! $tx_id         ||
-           ! $msg_type)
-        {
+        if(! $msg_len || ! $msg_type) {
             next;
         }
 
