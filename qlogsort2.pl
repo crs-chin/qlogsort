@@ -111,6 +111,11 @@ Qualcomm QCAT application installed and available to this program
 
 Specify the REGEX for which the matching qmi will be dissected
 
+=item B<-dissected-qmi-filter=REGEX>
+
+Specify the REGEX for which the matching dissected qmi lines will be
+write to output
+
 =item B<-condense-qmi=[0|1|2]>
 
 Condense qmi message from QCAT, this options removes many redundant
@@ -172,7 +177,7 @@ decimal digits
 
 =cut
 
-my $VERSION = 'version 1.0.5 (c) crs.chin@gmain.com';
+my $VERSION = 'version 1.0.6 (c) crs.chin@gmain.com';
 
 # configured tag handlers table
 my %TAG_HANDLER_CONFIG_TABLE = (
@@ -484,6 +489,7 @@ my $DISSECT_OUTPUT_FILE_HANDLE;
 my $DISSECT_OUTPUT_FILE_NAME;
 
 my @DISSECT_FILTER  = ();
+my @DISSECTED_FILTER  = ();
 my @SUBSTITUTE_QMI  = ();
 
 sub handle_sig {
@@ -518,6 +524,21 @@ sub qcat_finit {
 
 sub append_dissected_qmi_line {
     my ($lines, $message) = @_;
+
+    if(@DISSECTED_FILTER > 0) {
+        my $filtered = 0;
+
+        foreach(@DISSECTED_FILTER) {
+            if($message =~ $_) {
+                $filtered = 1;
+                last;
+            }
+        }
+
+        if(! $filtered) {
+            return;
+        }
+    }
 
     if(@SUBSTITUTE_QMI > 0) {
         my $search;
@@ -1062,6 +1083,12 @@ sub on_opt_dissect_qmi_filter {
     push @DISSECT_FILTER, $value;
 }
 
+sub on_opt_dissected_qmi_filter {
+    my ($name, $value) = @_;
+
+    push @DISSECTED_FILTER, $value;
+}
+
 sub on_opt_handler_list {
     print "Supported tag handlers:\n";
     for my $h (keys %TAG_HANDLER_TABLE) {
@@ -1166,6 +1193,7 @@ sub main {
                "subs=s@"                =>  \&on_opt_subs,
                "qmi-subs=s@"            =>  \&on_opt_qmi_subs,
                "dissect-qmi-filter=s@"  =>  \&on_opt_dissect_qmi_filter,
+               "dissected-qmi-filter=s@"=>  \&on_opt_dissected_qmi_filter,
                "handler-list"           =>  \&on_opt_handler_list,
                "out=s"                  =>  \&on_opt_out,
                "field=s"                =>  \&on_opt_field,
