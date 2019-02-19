@@ -438,7 +438,7 @@ sub filter_qmi {
             ($qmi_version, $qmi_body) = (
                 $_
                 =~
-                /.*(QC-QMI|QMI_FW)\s+:\s*(.*)$/
+                /.*(QC-QMI|QMI_FW)\s+:?\s*(.*)$/
             );
 
             $pid = -1;
