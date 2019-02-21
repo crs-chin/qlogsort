@@ -133,6 +133,14 @@ specified
 
 Specify the field list to print in the final output file
 
+=item B<-field-subs=REGEX>
+
+Specify REGEX as substitution regex to the previously specified field,
+the matching REGEX will be replaced with the next pattern specified by
+-sub, eg. use the follow arguments the replace XX into YYXXYY
+
+    -field-subs=(XX) -field-subs=YY$1YY
+
 =item B<-field-list>
 
 List available field, use "all" to enable all fields output, use
@@ -257,6 +265,8 @@ my %TAG_HANDLER_TABLE_DESC = (
 );
 
 my $OPT_LAST_TAG    = "";
+
+my $OPT_LAST_FIELD  = "";
 my %OPT_FIELD       = (
     fname   =>  0,
     linum   =>  0,
@@ -268,7 +278,9 @@ my %OPT_FIELD       = (
     tag     =>  0,
     message =>  0,
 );
-my %OPT_FIELD_DESC   = (
+my %OPT_FIELD_SUBS = (
+);
+my %OPT_FIELD_DESC  = (
     fname   =>  "Print origin file name",
     linum   =>  "Print origin line number",
     date    =>  "Print date of the message",
@@ -298,9 +310,9 @@ my @OUTPUT_QUEUE    = ();
 sub submit_header {
     my ($cmd_line) = @_;
     my $title = sprintf("%*s%*s%*s%s%*s%*s%s%*s%*s%*s%s%s\n",
-                        $OPT_FIELD{"fname"} ? -30 : 0,
+                        $OPT_FIELD{"fname"} ? -15 : 0,
                         $OPT_FIELD{"fname"} ? "FILE NAME" : 0,
-                        $OPT_FIELD{"linum"} ? 8 : 0,
+                        $OPT_FIELD{"linum"} ? -15 : 0,
                         $OPT_FIELD{"linum"} ? "LINE NUM" : 0,
                         $OPT_FIELD{"date"} ? 5 : 0,
                         $OPT_FIELD{"date"} ? "DATE" : "",
@@ -329,7 +341,7 @@ sub submit_header {
     print $OUTPUT_STREAM "--------------------------------------------------------------------\n";
 }
 
-sub submit_line {
+sub do_submit_line {
     my ($line) = @_;
     my $format;
 
@@ -356,6 +368,37 @@ sub submit_line {
     }
 
     print $OUTPUT_STREAM  "$format";
+}
+
+sub apply_field_subs {
+    my ($line, $field) = @_;
+    my $subs = $OPT_FIELD_SUBS{$field};
+
+    for(my $i = 0; $i < @$subs; $i += 2) {
+        my $search = $$subs[$i];
+        my $replace = $$subs[$i + 1];
+
+        $replace =~ s/"/\\"/g;
+        $replace = '"' . $replace . '"';
+        $line->{$field} =~ s/$search/$replace/gee;
+    }
+}
+
+sub submit_line {
+    my ($line) = @_;
+    my %out    = ();
+
+    if($line->{"type"} ne "log" || keys(%OPT_FIELD_SUBS) <= 0) {
+        do_submit_line($line);
+        return;
+    }
+
+    %out = %$line;
+    foreach(keys %OPT_FIELD_SUBS) {
+        apply_field_subs(\%out, $_);
+    }
+
+    do_submit_line(\%out);
 }
 
 sub do_submit_block {
@@ -1200,8 +1243,27 @@ sub on_opt_field {
             print STDERR "ERROR: Unspported field specification \"$f\", abort!\n";
             exit -1;
         }
+
+        $OPT_LAST_FIELD = $f;
         $OPT_FIELD{$f} = 1;
     }
+}
+
+sub on_opt_field_subs {
+    my ($name, $value) = @_;
+    my $subs = 0;
+
+    if(! $OPT_LAST_FIELD) {
+        print STDERR "ERROR:No field specified to relate \"$value\", abort!\n";
+        exit -1;
+    }
+
+    if(! exists $OPT_FIELD_SUBS{$OPT_LAST_FIELD}) {
+        $OPT_FIELD_SUBS{$OPT_LAST_FIELD} = [];
+    }
+
+    $subs = $OPT_FIELD_SUBS{$OPT_LAST_FIELD};
+    push @$subs, $value;
 }
 
 sub on_opt_field_list {
@@ -1258,9 +1320,9 @@ sub main {
             $CMD_LINE .= " ";
         }
 
-        $CMD_LINE .= "\""  if($_ !~ /-.*/);
+        $CMD_LINE .= "\'"  if($_ !~ /-.*/);
         $CMD_LINE .= $_;
-        $CMD_LINE .= "\""  if($_ !~ /-.*/);;
+        $CMD_LINE .= "\'"  if($_ !~ /-.*/);;
     }
 
     GetOptions("tag=s@",                =>  \&on_opt_tag,
@@ -1274,6 +1336,7 @@ sub main {
                "handler-list"           =>  \&on_opt_handler_list,
                "out=s"                  =>  \&on_opt_out,
                "field=s"                =>  \&on_opt_field,
+               "field-subs=s@"          =>  \&on_opt_field_subs,
                "field-list"             =>  \&on_opt_field_list,
                "<>"                     =>  \&on_opt_args,
                "version"                =>  \&on_opt_version,
@@ -1326,6 +1389,15 @@ sub main {
 
         if(@SUBSTITUTE_QMI % 2) {
             print STDERR "ERROR:QMI substitution arguments must come in pairs, abort!\n";
+            exit -1;
+        }
+    }
+
+    foreach(keys %OPT_FIELD_SUBS) {
+        my $subs = $OPT_FIELD_SUBS{$_};
+
+        if(@$subs % 2) {
+            print STDERR "ERROR:Field \"$_\" substitution arguments must come in pairs, abort!\n";
             exit -1;
         }
     }
