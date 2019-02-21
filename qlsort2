@@ -135,7 +135,8 @@ Specify the field list to print in the final output file
 
 =item B<-field-list>
 
-List available field, use "all" to enable all fields output
+List available field, use "all" to enable all fields output, use
+"default" to enable all fields except finame and linum
 
 =item B<-dissect-qmi>
 
@@ -212,7 +213,7 @@ decimal digits
 
 =cut
 
-my $VERSION = 'version 1.0.6 (c) crs.chin@gmain.com';
+my $VERSION = 'version 1.0.7 (c) crs.chin@gmain.com';
 
 # configured tag handlers table
 my %TAG_HANDLER_CONFIG_TABLE = (
@@ -247,10 +248,18 @@ my %TAG_HANDLER_CONFIG_TABLE = (
 my %TAG_HANDLER_TABLE = (
     "qmi"       =>  \&handle_qmi,
     "default"   =>  \&handle_tag,
+    "null"      =>  \&handle_null,
+);
+my %TAG_HANDLER_TABLE_DESC = (
+    "qmi"       =>  "This handler is QMI aware and supports QMI dissecting",
+    "default"   =>  "This is default handler, direct print to output",
+    "null"      =>  "This is black hole, all messages will be discarded",
 );
 
 my $OPT_LAST_TAG    = "";
 my %OPT_FIELD       = (
+    fname   =>  0,
+    linum   =>  0,
     date    =>  0,
     time    =>  0,
     pid     =>  0,
@@ -258,6 +267,19 @@ my %OPT_FIELD       = (
     level   =>  0,
     tag     =>  0,
     message =>  0,
+);
+my %OPT_FIELD_DESC   = (
+    fname   =>  "Print origin file name",
+    linum   =>  "Print origin line number",
+    date    =>  "Print date of the message",
+    time    =>  "Print time of the message",
+    pid     =>  "Print process ID of the message",
+    tid     =>  "Print thread ID of the message",
+    level   =>  "Print log level of the message",
+    tag     =>  "Print log tag of the messsage",
+    message =>  "Print log message content",
+    all     =>  "Print all available fields",
+    default =>  "Print all available fields except fname and linum",
 );
 
 my @INPUT_STREAMS   = (
@@ -275,7 +297,11 @@ my @OUTPUT_QUEUE    = ();
 
 sub submit_header {
     my ($cmd_line) = @_;
-    my $title = sprintf("%*s%s%*s%*s%s%*s%*s%*s%s%s\n",
+    my $title = sprintf("%*s%*s%*s%s%*s%*s%s%*s%*s%*s%s%s\n",
+                        $OPT_FIELD{"fname"} ? -30 : 0,
+                        $OPT_FIELD{"fname"} ? "FILE NAME" : 0,
+                        $OPT_FIELD{"linum"} ? 8 : 0,
+                        $OPT_FIELD{"linum"} ? "LINE NUM" : 0,
                         $OPT_FIELD{"date"} ? 5 : 0,
                         $OPT_FIELD{"date"} ? "DATE" : "",
                         $OPT_FIELD{"date"} && $OPT_FIELD{"time"} ? "/" : "",
@@ -308,7 +334,9 @@ sub submit_line {
     my $format;
 
     if($line->{"type"} eq "log") {
-        $format = sprintf("%s%s%s %*s%s%*s %.1s %s %s\n",
+        $format = sprintf("%s%s%s%s%s %*s%s%*s %.1s %s %s\n",
+                          $OPT_FIELD{"fname"} ? $line->{"fname"} . ":" : "",
+                          $OPT_FIELD{"linum"} ? "[" . $line->{"linum"} . "] " : "",
                           $OPT_FIELD{"date"} ? $line->{"date"} : "",
                           $OPT_FIELD{"date"} && $OPT_FIELD{"time"} ? "/" : "",
                           $OPT_FIELD{"time"} ? $line->{"time"} : "",
@@ -979,11 +1007,14 @@ sub handle_tag {
     }
 }
 
+sub handle_null {
+    # null handler is a blaock hole
+}
 
 # sample 1: 05-04 14:09:48.510   888  2225 D TAG  : log content blah blah...
 # sample 2: 07-09 13:53:24.319 D/QMI_FW  ( 1206): log content blah blah
 sub log_dissect {
-    my ($line) = @_;
+    my ($fname, $linum, $line) = @_;
     my ($_date, $_time, $_pid, $_tid, $_level, $_tag, $_log) = (
             $line =~ /^\s*(\d+-\d+)\s+(\d+:\d+:\d+\.\d+)\s+(\d+)\s+(\d+)\s+([VDIEWF])\s+([^:]+)\s*:\s*(.*)$/
         );
@@ -997,7 +1028,9 @@ sub log_dissect {
         $_tid = -1;
     }
 
-    return (type    =>  "log",
+    return (fname   =>  $fname,
+            linum   =>  $linum,
+            type    =>  "log",
             date    =>  $_date,
             time    =>  $_time,
             pid     =>  $_pid,
@@ -1126,8 +1159,8 @@ sub on_opt_dissected_qmi_filter {
 
 sub on_opt_handler_list {
     print "Supported tag handlers:\n";
-    for my $h (keys %TAG_HANDLER_TABLE) {
-        print "  $h\n";
+    foreach (keys %TAG_HANDLER_TABLE_DESC) {
+        print sprintf("  %-15s: %s\n", $_, $TAG_HANDLER_TABLE_DESC{$_});
     }
     exit 0;
 }
@@ -1153,6 +1186,16 @@ sub on_opt_field {
             next;
         }
 
+        if($f eq "default") {
+            foreach my $k (keys %OPT_FIELD) {
+                if($k eq "fname" || $k eq "linum") {
+                    next;
+                }
+                $OPT_FIELD{$k} = 1;
+            }
+            next;
+        }
+
         if(! exists $OPT_FIELD{$f}) {
             print STDERR "ERROR: Unspported field specification \"$f\", abort!\n";
             exit -1;
@@ -1163,10 +1206,9 @@ sub on_opt_field {
 
 sub on_opt_field_list {
     print "Supported field list:\n";
-    foreach (keys %OPT_FIELD) {
-        print "  $_\n";
+    foreach (keys %OPT_FIELD_DESC) {
+        print sprintf("  %-15s: %s\n", $_, $OPT_FIELD_DESC{$_});
     }
-    print "  all\n";
     exit 0;
 }
 
@@ -1318,7 +1360,7 @@ sub main {
         while(<$fd>) {
             last if(! $_);
 
-            %log = log_dissect($_);
+            %log = log_dissect($in->{"name"}, $., $_);
             next if (!  $log{"tag"});
 
             $handled = 0;
