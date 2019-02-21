@@ -221,7 +221,7 @@ decimal digits
 
 =cut
 
-my $VERSION = 'version 1.0.7 (c) crs.chin@gmain.com';
+my $VERSION = 'version 1.0.8 (c) crs.chin@gmain.com';
 
 # configured tag handlers table
 my %TAG_HANDLER_CONFIG_TABLE = (
@@ -346,7 +346,7 @@ sub do_submit_line {
     my $format;
 
     if($line->{"type"} eq "log") {
-        $format = sprintf("%s%s%s%s%s %*s%s%*s %.1s %s %s\n",
+        $format = sprintf("%s%s%s%s%s %*s%s%*s %s %s %s\n",
                           $OPT_FIELD{"fname"} ? $line->{"fname"} . ":" : "",
                           $OPT_FIELD{"linum"} ? "[" . $line->{"linum"} . "] " : "",
                           $OPT_FIELD{"date"} ? $line->{"date"} : "",
@@ -373,6 +373,10 @@ sub do_submit_line {
 sub apply_field_subs {
     my ($line, $field) = @_;
     my $subs = $OPT_FIELD_SUBS{$field};
+
+    if($field eq "message") {
+        $field = "log";
+    }
 
     for(my $i = 0; $i < @$subs; $i += 2) {
         my $search = $$subs[$i];
