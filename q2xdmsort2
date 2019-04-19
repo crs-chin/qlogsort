@@ -1,0 +1,1543 @@
+#!/bin/bash
+#
+# Copyright (C) <2019>  Crs Chin<crs.chin@gmail.com>
+# 
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 2 of the License, or
+# (at your option) any later version.
+# 
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+# 
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write to the Free Software
+# Foundation, Inc., 59 Temple Place - Suite 330,
+# Boston, MA 02111-1307, USA.
+#
+
+if ! type -p perl > /dev/null;then
+    echo "perl required for this program, abort!";
+    exit -1;
+fi
+
+perl -x $0 "$@"
+exit $?
+
+#!/usr/bin/perl
+#
+# Copyright (C) <2018>  Crs Chin<crs.chin@gmail.com>
+# 
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 2 of the License, or
+# (at your option) any later version.
+# 
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+# 
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write to the Free Software
+# Foundation, Inc., 59 Temple Place - Suite 330,
+# Boston, MA 02111-1307, USA.
+#
+
+use strict;
+use warnings;
+use FindBin;
+use File::Temp qw/ tempfile /;
+use Getopt::Long;
+use Pod::Usage;
+
+=pod
+
+=head1 NAME
+
+q2xdmsort2.pl - Sort and filter the text translation of QCAT
+
+=head1 SYNOPSIS
+
+q2xdmsort2.pl - [OPTIONS] [QCAT TEXT FILE LIST]
+
+=head1 OPTIONS
+
+=over 4
+
+=item B<-filter-enable=FILTER1,FILTER2,..>
+
+Enable filters as listed(no enabled by default), messages without
+dedicated filter will be discarded and REGEX for it will not take
+effect
+
+=item B<-filter-list>
+
+List supported filters and exit
+
+=item B<-gen-filter=REGEX>
+
+Specify REGEX to gen filter, this can be specified multiple times
+
+=item B<-gen-content-filter=REGEX>
+
+Specify REGEX as gen filter for filtering log message contents, this
+can be specified multiple times
+
+=item B<-edm-content-filter=REGEX>
+
+Specify REGEX as edm filter to extended debug messages, this can be
+specified multiple times
+
+=item B<-qmi-content-filter=REGEX>
+
+Specify REGEX as qmi filter to qmi, this can be specified multiple
+times
+
+=item B<-out=FILE>
+
+Specify the file write the final filtered log, STDOUT used if not
+specified
+
+=item B<-field>
+
+Specify the field list to print in the final output file
+
+=item B<-field-list>
+
+List available field, use "all" to enable all fields output, use
+"default" to enable all fields except finame and linum
+
+=item B<-condense-qmi=[0|1|2]>
+
+Condense qmi message from QCAT, this options removes many redundant
+information from the output of QCAT
+
+=item B<-no-header>
+
+Don't show commands information in the header indicating how the
+contents are filtered
+
+=item B<-version>
+
+Show version of the program
+
+=item B<-help>
+
+Print this help message
+
+=item B<-man>
+
+Show manual of this executable
+
+=back
+
+=head1 DESCRIPTION
+
+B<This program> will read input file(s) and parse as QCAT text
+ translations, filter and format in a friendly way for analyzing,
+ eliminate junk or unnecessary logs from interfering.
+
+=head1 QCAT TEXT FILE LIST
+
+File list of text files translated by QCAT
+
+=head1 REGEX
+
+The REGEX is standard perl regex, eg: '/(\d+)/' to match and capture
+decimal digits
+
+=cut
+BEGIN{
+    use sigtrap 'handler' => \&handle_sig, 'normal-signals';
+}
+
+my $VERSION = 'version 1.0.0 (c) crs.chin@gmain.com';
+
+my %FILTER_MANIFEST         = (
+    gen => {
+        desc    => "generic filter",
+        typeid  => "default",
+        handle  => \&handle_generic,
+    },
+
+    qmi => {
+        desc    => "qmi filter dedicated to QMI processing",
+        typeid  => "138E,138F,1390,1391,1392,1393,1394,1395,1396,1397,1398,1399,139A,139B,139C,139D,139E,139F,13A0,13A1,13A2,13A3,13A4,13A5,13A6,13A7,13A8,13A9,13AA,13AB,13AC,13AD,1544,180B,180C,180D,180E,180F,1810,1811,1812",
+        handle  => \&handle_qmi,
+    },
+
+    edm => {
+        desc    => "extended debug message filter",
+        typeid  => "1FEB",
+        handle  => \&handle_extended_debug_message,
+    },
+);
+
+my @FILTER_GEN_TABLE        = ();
+my @FILTER_GEN_CONTENT_TABLE= ();
+
+my @FILTER_EDM_CONTENT_TABLE= ();
+my @FILTER_EDM_DISCARD_TABLE= ( '^\s+$|Drop count = 0' );
+
+my @FILTER_QMI_CONTENT_TABLE= ();
+
+my %MESSAGE_HANDLE_TABLE    = (
+    #"1004"     Access Channel Message
+    #"1005"     Reverse Channel Traffic Message
+    #"1006"     Sync Channel Traffic Message
+    #"1007"     Paging Channel Message
+    #"1008"     Forward Channel Traffic Message
+    #"1009"     Forward Link Vocoder Packet
+    #"100A"     Reverse Link Vocoder Packet
+    #"1013"     Access Probe Information
+    #"1014"     Reserved
+    #"1016"     Sparse AGC Power Control
+    #"1017"     Band Change
+    #"102E"     Service Configuration
+    #"1032"     Simple TDSO Counters
+    #"1033"     Reserved
+    #"1034"     Reserved
+    #"1035"     Reserved
+    #"1036"     IS-801 Forward Link
+    #"1037"     IS-801 Reverse Link
+    #"1038"     Reserved
+    #"1039"     Reserved
+    #"103B"     Reserved
+    #"103C"     Reserved
+    #"103E"     Bluetooth General
+    #"103F"     Bluetooth Baseband General
+    #"1040"     Bluetooth Baseband Device-specific
+    #"1041"     Bluetooth Link Manager Protocol
+    #"1042"     Bluetooth L2CAP
+    #"1043"     Bluetooth Service Discovery
+    #"1044"     Bluetooth RFCOMM Session Specific
+    #"1045"     Reserved
+    #"1046"     Bluetooth Audio Gateway
+    #"1048"     Bluetooth LMP Signaling Received
+    #"1049"     Bluetooth LMP Signaling Transmitted
+    #"104A"     Reserved
+    #"104B"     Reserved
+    #"104C"     Bluetooth L2CAP Signaling Received
+    #"104D"     Bluetooth L2CAP Signaling Transmitted
+    #"104E"     Reserved
+    #"104F"     Reserved
+    #"1050"     Bluetooth SDP Signaling Received
+    #"1051"     Bluetooth SDP Signaling Transmitted
+    #"1052"     Bluetooth RFCOMM Signaling Received
+    #"1053"     Bluetooth RFCOMM Signaling Transmitted
+    #"1054"     Reserved
+    #"1055"     Reserved
+    #"105E"     1xEV Handoff State
+    #"105F"     1xEV Active Set Pilot
+    #"1060"     1xEV Reverse Link Packet Summary
+    #"1063"     1xEV Reverse Power Control
+    #"1066"     1xEV ARQ Effective Receive Rate
+    #"1068"     1xEV Air Link Summary
+    #"1069"     1xEV Power
+    #"106C"     1xEV Access Attempt
+    #"106D"     1xEV Reverse Activity Bits Buffer
+    #"106E"     1xEV Connection Attempt
+    #"106F"     1xEV Page Message
+    #"1070"     1xEV RLP Statistics
+    #"1071"     1xEV Connection Release
+    #"1072"     1xEV Reverse Activity Bits Information
+    #"1076"     1xEV Signaling Access Channel
+    #"1077"     1xEV Signaling Reverse Traffic Channel
+    #"1078"     1xEV Signaling Control Channel Directed
+    #"1079"     1xEV Signaling Forward Traffic Channel
+    #"107B"     1xEV Traffic Channel Assignment Info
+    #"107C"     1xEV Signaling Control Channel Broadcast
+    #"107E"     1xEV State Information
+    #"1082"     1xEV Rx Partial RLP
+    #"1083"     1xEV Tx Partial RLP
+    #"1084"     1xEV Forward Statistics Summary
+    #"1085"     1xEV AC MAC Capsule
+    #"1086"     1xEV CC MAC Packet
+    #"1088"     1xEV Session Attempt Version 2
+    #"1089"     1xEV Searcher Data Version 2
+    #"108C"     1xEV DRC-ARQ Buffer Version 2
+    #"108D"     1xEV Acquisition Info
+    #"108E"     1xEV Reacquisition Info
+    #"108F"     1xEV Sleep Info
+    #"1090"     Forward Dedicated Control Channel Message
+    #"1091"     Reverse Dedicated Control Channel Message
+    #"1093"     Active Set Information
+    #"1094"     Reserved
+    #"1095"     Reserved
+    #"1096"     GPS Visit Parameters
+    #"1097"     Log GPS Measurement
+    #"1098"     RUIM Debug
+    #"109B"     Reserved
+    #"10BD"     Enhanced Access Probe
+    #"10C2"     Fast Forward Power Control Version 2
+    #"10C3"     Reverse Power Control Version 2
+    #"10C5"     Service Configuration Version 2
+    #"10C6"     Active Set Information Version 2
+    #"10C7"     Reduced Active Set Information
+    #"10D2"     System Determination Last Main Action
+    #"10D3"     System Determination Last Hybrid Action
+    #"10D6"     Broadcast Control Channel Message
+    #"10D7"     Reverse Enhanced Access Channel Message
+    #"10D8"     Forward Common Control Channel Message
+    #"10D9"     RDA Frame Information Version 2
+    #"10DA"     Reserved
+    #"10DD"     Reserved
+    #"10DF"     Reserved
+    #"10E0"     Reserved
+    #"10E1"     Reserved
+    #"1113"     PPP Rx frames, Um iface framed
+    #"1114"     PPP Rx frames, Rm iface framed
+    #"1115"     PPP Rx frames, An iface framed
+    #"1123"     PPP Tx frames, Um iface framed
+    #"1124"     PPP Tx frames, Rm iface framed
+    #"1125"     PPP Tx frames, An iface framed
+    #"1133"     PPP Rx frames, Um iface unframed
+    #"1134"     PPP Rx frames, Rm iface unframed
+    #"1135"     PPP Rx frames, An iface unframed
+    #"1143"     PPP Tx frames, Um iface unframed
+    #"1144"     PPP Tx frames, Rm iface unframed
+    #"1145"     PPP Tx frames, An iface unframed
+    #"1154"     Position Engine Full Log Extended
+    #"1158"     Reserved
+    #"115E"     Position Engine Partial Log Extended
+    #"1160"     Reserved
+    #"1176"     Service Configuration, Version 3
+    #"117B"     Reserved
+    #"117D"     Reserved
+    #"117E"     Reserved
+    #"1184"     1xEV Tune Away Info
+    #"1185"     1xEV Tune Away RRI Info
+    #"1186"     1xEV Connection Term Info
+    #"1187"     1xEV Connected State Protocol Info
+    #"1188"     1xEV Connected State TX Info
+    #"1189"     1xEV Connected State RMAC Info
+    #"118A"     1xEV Connected State Search Info
+    #"1192"     1xEV Rev-A Single-User Forward Statistics Summary
+    #"1193"     1xEV Rev-A Multi-User Forward Statistics Summary
+    #"119B"     Srch TNG 1x Searcher Dump
+    #"119C"     Srch TNG General Status
+    #"119D"     Srch TNG Demod Info
+    #"119E"     Srch TNG Sleep Stats
+    #"119F"     Srch TNG Quick Paging Channel Info
+    #"11A0"     Srch TNG AFC Info
+    #"11A1"     Srch TNG Acquisition Info
+    #"11A2"     Srch TNG Finger Channel Estimate
+    #"11A6"     Srch TNG Asdiv
+    #"11E1"     GPS PDSM Position Report Callback
+    #"11E2"     GPS PDSM PD Event Callback
+    #"11E3"     GPS PDSM PA Event Callback
+    #"11E4"     GPS PDSM Notify Verify Request
+    #"11E5"     Reserved
+    #"11E6"     GPS PDSM Reserved 2
+    #"11E9"     GPS MS MPC Forward Link
+    #"11EA"     GPS MS MPC Reverse Link
+    #"11EB"     Data Protocol Logging
+    #"1250"     GPS Demodulation Tracking Header
+    #"1251"     GPS Demodulation Tracking Results
+    #"1252"     GPS Demodulation Bit Edge
+    #"1253"     GPS Demodulation Soft Decisions
+    #"1254"     GPS Post-Processed Demodulation Tracking Results
+    #"1255"     GPS Demodulation Subframe
+    #"125E"     Sleep Task Statistics
+    #"1262"     WCDMA Sleep Controller Statistics
+    #"1270"     WMS Message List
+    #"1271"     Multimode Generic SIM Driver Interface
+    #"1272"     Generic SIM Toolkit Task
+    #"1273"     CM Phone Event
+    #"1274"     WMS Set Message List
+    #"1275"     1xEV Multi RLP Rev Statistics
+    #"1276"     1xEV Multi RLP Fwd Statistics
+    #"1277"     1xEV Rx Partial MultiRLP Packet
+    #"1278"     1xEV Tx Partial MultiRLP Packet
+    #"1279"     1xEV Equalizer Data Log Packet
+    #"127A"     1xEV Equalizer C/I log Packet
+    #"127C"     1xEV Searcher Data Version 3
+    #"127D"     1xEV Rev-A RL Gains
+    #"127E"     1xEV Rev-A RL Metrics
+    #"127F"     1xEV Rev-A T2P Resource Info
+    #"1280"     1xEV Rev-A RMAC3 Packet Info
+    #"1281"     1xEV Rev-A RAB Update Info
+    #"1282"     1xEV Rev-A DRC-ARQ-DSC Buffer
+    #"1283"     1xEV Rev-A MUP User Statistics
+    #"1284"     1xEV Rev-A Fwd Link Packet Header Info
+    #"1285"     1xEV Rev-A RL ARQ Status
+    #"1286"     1xEV Rev-A RL Packet Status
+    #"128C"     1x EV Enhanced Multi RLP Fwd Stats
+    #"128D"     1x EV Enhanced Multi RLP Rev Stats
+    #"128E"     1x EV Rx Partial Enhanced Multi RLP Packet
+    #"128F"     1x EV Tx Partial Enhanced Multi RLP Packet
+    #"1292"     1x EV Enhanced Access Attempt
+    #"1293"     1x EV Access Probe
+    #"1294"     1xEV-DO Multi Carrier Forward Link Packet Header Information
+    #"1295"     Reserved
+    #"1296"     1xEV-DO Multi Carrier Air Link Summary
+    #"1297"     1xEV-DO Multi Carrier Searcher Data
+    #"1298"     1xEV-DO Multi Carrier DRC ARQ DSC Buffer
+    #"1299"     1xEV-DO Multi Carrier RMAC4 T2P Resource
+    #"129A"     1xEV-DO Multi Carrier RMAC4 Packet Information
+    #"129B"     Reserved
+    #"129C"     1xEV-DO Multi Carrier Power
+    #"129D"     1xEV-DO Multi Carrier Reverse Link Gains
+    #"129E"     1xEV-DO Multi Carrier Reverse Link ARQ Status
+    #"129F"     1xEV-DO Multi Carrier Reverse Link Metrics
+    #"12A0"     1xEV-DO Multi Carrier RAB Update Information
+    #"12A1"     1xEV-DO Multi Carrier Pilot Sets
+    #"12A2"     1xEV-DO Multi Carrier Single User Packet Forward Statistics
+    #"12A3"     1xEV-DO Multi Carrier Multiple User Forward Statistics
+    #"12A4"     HDR Enh Sleep Info
+    #"12A5"     HDR Multi Link MRLP Fwd Stats
+    #"12A6"     HDR Multi Link MRLP Rev Stats
+    #"12A7"     HDR Multi Link MRLP Partial Rx
+    #"12A8"     HDR Multi Link MRLP Partial Tx
+    #"12AA"     1xEV-DO Multi Carrier Reverse Link Packet Status
+    #"12AB"     1xEV-DO Multi Carrier Equalizer C/I
+    #"12AD"     1xEV-DO Multi Carrier Equalizer Data
+    #"12AF"     Reserved
+    #"12B5"     HDR Overhead Cache Summary Log
+    #"12B6"     HDR Pilot Sets Version 3
+    #"12B7"     HDR MRLP Partial Rx
+    #"12B8"     HDR MRLP Partial Tx
+    #"12B9"     HDR Adaptive Receiver Diversity
+    #"12BA"     HDR SRCH RF TxD Event 
+    #"12BB"     HDR RevA FlexConn 
+    #"12BC"     HDR RevA DTX 
+    #"12BD"     HDR RevB FlexConn
+    #"12BE"     HDR RevB DTX 
+    #"12C1"     CM Call Event
+    #"12E3"     Reserved
+    #"12E4"     Reserved
+    #"12E6"     GPS Decoded Ephemeris
+    #"12E7"     GPS Decoded Almanac
+    #"12E8"     TRM
+    #"12E9"     Reserved
+    #"132B"     Logging Requested QOS
+    #"132C"     Granted QOS Logging
+    #"132D"     QOS State Logging
+    #"132E"     Modified QOS Logging
+    #"1335"     Global IPV4 Stats
+    #"1336"     Global IPV6 Stats
+    #"1337"     Global ICMPV4 Stats
+    #"1338"     Global ICMPV6 Stats
+    #"1339"     Global TCP Stats
+    #"133A"     Global UDP Stats
+    #"133B"     TCP Stats
+    #"133C"     MEM Stats
+    #"133D"     IFACE Stats
+    #"133E"     PPP Stats
+    #"133F"     ARP Stats
+    #"1340"     Delta Stats
+    #"1341"     TCP Instance Stats
+    #"1342"     UDP Instance Stats
+    #"1343"     PPP Instance Stats
+    #"1344"     Interface Instance Stats
+    #"1345"     MEM Instance Stats
+    #"1346"     FLOW Instance Stats
+    #"1347"     Physical Link Instance Stats
+    #"1348"     ARP Instance Stats
+    #"1349"     IPHC Instance Stats
+    #"134A"     LLC Instance Stats
+    #"134B"     ROHC Instance Stats
+    #"134C"     RSVP Instance Stats
+    #"134D"     LLC Stats
+    #"134E"     RSVP Stats
+    #"134F"     CM SS Event
+    #"1352"     GPS Processed Peak
+    #"1353"     Reserved
+    #"1356"     QOS State Logging, Ver2
+    #"1357"     BT Host HCI TX Data
+    #"1358"     BT Host HCI RX Data
+    #"1359"     Reserved
+    #"135A"     Logging Requested QOS, Ver2
+    #"135B"     Granted QOS Logging, Ver 2
+    #"135C"     Modified QOS Logging, Ver 2
+    #"135E"     Reserved
+    #"135F"     Reserved
+    #"1360"     Reserved
+    #"1361"     RoHC Compressor
+    #"1362"     RoHC Decompressor
+    #"1363"     RoHC Feedback Compressor
+    #"1364"     RoHC Feedback Decompressor
+    #"1365"     BT HCI Command
+    #"1366"     BT HCI Event
+    #"1367"     BT HCI TX ACL Data
+    #"1368"     BT HCI RX ACL Data
+    #"1369"     BT SOC H4 Deep Sleep
+    #"136D"     Reserved
+    #"136F"     Converged GPS Clock Report
+    #"1370"     Converged GPS Position Report
+    #"1371"     Converged GPS Measurement Report
+    #"1372"     Converged GPS RF Status Report
+    #"1374"     Converged GPS PD Results
+    #"1375"     Reserved
+    #"1376"     Reserved
+    #"1377"     Reserved
+    #"1378"     Reserved
+    #"1379"     Reserved
+    #"137A"     Reserved
+    #"137B"     Reserved
+    #"137C"     CGPS PDSM Position Report Callback
+    #"137D"     Reserved
+    #"137E"     Reserved
+    #"137F"     Reserved
+    #"1380"     Reserved
+    #"1381"     Reserved
+    #"1382"     Reserved
+    #"1383"     Reserved
+    #"1384"     CGPS PDSM External Status NMEA Report
+    #"1385"     Reserved
+    #"1386"     Reserved
+    #"1387"     Reserved
+    #"1388"     UMTS To CDMA Handover Paging Channel Message
+    #"1389"     UMTS To CDMA Handover Traffic Channel Message
+    #"138A"     CGPS IQ Report
+    #"138B"     VOIP To CDMA Handover Paging Channel Message
+    #"138C"     VOIP To CDMA Handover Access Channel Message
+    #"138D"     VOIP To CDMA Handover Forward Traffic Channel Message
+    #"138E"     QMI Link 1 RX PDU
+    #"138F"     QMI Link 1 TX PDU
+    #"1390"     QMI Link 2 RX PDU
+    #"1391"     QMI Link 2 TX PDU
+    #"1392"     QMI Link 3 RX PDU
+    #"1393"     QMI Link 3 TX PDU
+    #"1394"     QMI Link 4 RX PDU
+    #"1395"     QMI Link 4 TX PDU
+    #"1396"     QMI Link 5 RX PDU
+    #"1397"     QMI Link 5 TX PDU
+    #"1398"     QMI Link 6 RX PDU
+    #"1399"     QMI Link 6 TX PDU
+    #"139A"     QMI Link 7 RX PDU
+    #"139B"     QMI Link 7 TX PDU
+    #"139C"     QMI Link 8 RX PDU
+    #"139D"     QMI Link 8 TX PDU
+    #"139E"     QMI Link 9 RX PDU
+    #"139F"     QMI Link 9  TX PDU
+    #"13A0"     QMI Link 10 RX PDU
+    #"13A1"     QMI Link 10 TX PDU
+    #"13A2"     QMI Link 11 RX PDU
+    #"13A3"     QMI Link 11 TX PDU
+    #"13A4"     QMI Link 12 RX PDU
+    #"13A5"     QMI Link 12 TX PDU
+    #"13A6"     QMI Link 13 RX PDU
+    #"13A7"     QMI Link 13 TX PDU 
+    #"13A8"     QMI Link 14 RX PDU 
+    #"13A9"     QMI Link 14 TX PDU 
+    #"13AA"     QMI Link 15 RX PDU 
+    #"13AB"     QMI Link 15 TX PDU 
+    #"13AC"     QMI Link 16 RX PDU 
+    #"13AD"     QMI Link 16 TX PDU 
+    #"13AF"     QOS Info Code Update Logging
+    #"13BA"     Reserved
+    #"13BB"     Reserved
+    #"13C2"     Reserved
+    #"13C3"     Reserved
+    #"13C4"     Reserved
+    #"13C5"     Reserved
+    #"13C6"     Reserved
+    #"13C7"     Reserved
+    #"13CB"     Reserved
+    #"13CE"     Reserved
+    #"13CF"     Reserved
+    #"13D0"     Reserved
+    #"13DB"     Reserved
+    #"13DC"     CGPS ME RF Linearity Status
+    #"13DD"     Reserved
+    #"13DE"     Reserved
+    #"13DF"     ROHC Compressor Statistics
+    #"13E0"     ROHC Decompressor Statistics
+    #"13E1"     Sensors - Kalman Filter Info
+    #"13E2"     Sensors - Integrated Measurements
+    #"13E3"     Sensors - Bias Calibration Values
+    #"1422"     Reserved
+    #"1430"     Reserved
+    #"1437"     FLOW Stats
+    #"1438"     Physical Link Stats
+    #"1439"     UDP Stats
+    #"143B"     IPHC Stats
+    #"143C"     ROHC Stats
+    #"1440"     CGPS ME Dynamic Power Optimization Status
+    #"1441"     Reserved
+    #"1442"     Reserved
+    #"1443"     Reserved
+    #"1444"     Reserved
+    #"1447"     RF RFM API
+    #"1448"     RF RFM State
+    #"1449"     1X RF Warmup
+    #"144A"     1X RF Power Limiting
+    #"144B"     1X RF State
+    #"144C"     1X RF Sleep
+    #"144D"     1X RF TX State
+    #"144E"     1X RF IntelliCeiver State
+    #"144F"     1X RF RX ADC Clock
+    #"1450"     1X RF LNA Switch Point
+    #"1451"     1X RF RX Calibration
+    #"1452"     1X RF API
+    #"1453"     1X RF RX PLL Locking Status
+    #"1454"     1X RF Voltage Regulator
+    #"1455"     CGPS Diag Successful Fix Count
+    #"1456"     CGPS MC Tracking DPO Status
+    #"1457"     Reserved
+    #"1458"     Reserved
+    #"1459"     Data Services PPP Configuration Parameters
+    #"145A"     Data Services Physical Link Configuration Parameters
+    #"145C"     Reserved
+    #"145D"     Reserved
+    #"145E"     Reserved
+    #"145F"     Unrecognized
+    #"1460"     Reserved
+    #"1461"     Reserved
+    #"1470"     PS Statistics Global Sock
+    #"1474"     Stationary Detector Output
+    #"1475"     CGPS PDSM EXT Status MEAS Report PPM
+    #"1476"     GNSS Position Report
+    #"1477"     GNSS GPS Measurement Report
+    #"1478"     GNSS Clock Report
+    #"1479"     Reserved
+    #"147A"     Reserved
+    #"147B"     GNSS CD DB Report
+    #"147C"     Reserved
+    #"147D"     Reserved
+    #"147E"     GNSS PRX RF HW Status Report
+    #"147F"     GNSS DRX RF HW Status Report
+    #"1480"     GNSS Glonass Measurement Report
+    #"1481"     GNSS GPS HBW RXD Measurement
+    #"1482"     GNSS PDSM Position Report Callback
+    #"1483"     Reserved
+    #"1484"     Reserved
+    #"1485"     Reserved
+    #"1486"     Reserved
+    #"1487"     CGPS WB FFT Stats
+    #"1488"     CGPS Slow Clock Calibration Report
+    #"1489"     Reserved
+    #"148A"     Reserved
+    #"148C"     Reserved
+    #"148D"     Reserved
+    #"148E"     Reserved
+    #"148F"     Reserved
+    #"1490"     GNSS PDSM PD Event Callback
+    #"1491"     Reserved
+    #"1494"     Reserved
+    #"1495"     Reserved
+    #"14A6"     Reserved
+    #"14A8"     Reserved
+    #"14A9"     Reserved
+    #"14AA"     Reserved
+    #"14AB"     Reserved
+    #"14AC"     Reserved
+    #"14AD"     Reserved
+    #"14B0"     Reserved
+    #"14B1"     Reserved
+    #"14B2"     Reserved
+    #"14B3"     Reserved
+    #"14B4"     Reserved
+    #"14B5"     Reserved
+    #"14B6"     Reserved
+    #"14B7"     Reserved
+    #"14B8"     Reserved
+    #"14B9"     Reserved
+    #"14C2"     CM Subscription Event
+    #"14C7"     Reserved
+    #"14CE"     UIM DS Data
+    #"14CF"     Reserved
+    #"14D0"     APR Modem
+    #"14D1"     Reserved
+    #"14D2"     APR ADSP
+    #"14D7"     Reserved
+    #"14D8"     Temperature Monitor Log
+    #"14DE"     GNSS OEMDRE Measurement Report
+    #"14E0"     GNSS OEMDRE Position Report
+    #"14E1"     GNSS OEMDRE SVPoly Report
+    #"14E2"     GNSS OEMDRE Sync
+    #"14E5"     Reserved
+    #"14E6"     Reserved
+    #"14E7"     Reserved
+    #"14E8"     Reserved
+    #"14E9"     Reserved
+    #"14EC"     1x Advanced FET Stats
+    #"14ED"     1x Advanced L1 Performance
+    #"14FC"     Reserved
+    #"14FE"     Reserved
+    #"14FF"     Reserved
+    #"1501"     Reserved
+    #"1502"     Reserved
+    #"1503"     Reserved
+    #"1504"     Reserved
+    #"1505"     XTM HTTP Response Status
+    #"1506"     XTM XTA Response Status
+    #"1507"     TLM Failed Lookup
+    #"1508"     Sensors SDP Virgo
+    #"1509"     Sensors SDP SSD
+    #"150A"     Sensors SDP CRD
+    #"150B"     Sensors SDP Time Sync
+    #"150C"     Sensors SDP MSD
+    #"150D"     GNSS Sensor Streaming Ready Status
+    #"150E"     GNSS Time Sync Request
+    #"150F"     GNSS Inject Time Sync Data
+    #"1510"     GNSS Inject Sensor Data
+    #"1511"     GNSS Get Sensor Config Response
+    #"1512"     GNSS Set Sensor Config
+    #"1513"     GNSS PE Heading Filter
+    #"1514"     Reserved
+    #"1515"     GNSS PE CRD
+    #"1516"     Reserved
+    #"1519"     Reserved
+    #"1520"     GNSS BP AMP Info
+    #"1526"     Reserved
+    #"152E"     ADSP Audio Decoder Input Log
+    #"152F"     ADSP Audio Per Object Post Processing Input Log
+    #"1530"     ADSP Audio Rx Matrix Mixer Input Log
+    #"1531"     ADSP Audio Common Object Post Processing Input Log
+    #"1532"     ADSP Audio Common Object Pre Processing Input Log
+    #"1533"     ADSP Audio Tx Matrix Mixer Input Log
+    #"1534"     ADSP Audio Per Object Pre Processing Input Log
+    #"1535"     ADSP Audio Encoder Input Log
+    #"1536"     ADSP Audio Encoder Output Log
+    #"1542"     Reserved
+    #"1544"     QMI_MCS_QCSI_PKT
+    #"1557"     Reserved
+    #"155D"     Reserved
+    #"155E"     Reserved
+    #"1567"     GNSS Fast TCAL
+    #"1568"     IMS RTP SN and Payload
+    #"1569"     IMS RTP Packet Loss
+    #"156A"     IMS RTCP
+    #"156B"     IMS QDJ Enqueue
+    #"156C"     IMS QDJ Dequeue
+    #"156D"     IMS QDJ Update
+    #"156E"     IMS SIP Message
+    #"156F"     Reserved
+    #"1570"     Reserved
+    #"1571"     IMS AMR Redundancy
+    #"1572"     Network IP Rm Tx 100 Bytes
+    #"1573"     Network IP Rm Rx 100 Bytes
+    #"1576"     Network IP Um Tx 100 Bytes
+    #"1577"     Network IP Um Rx 100 Bytes
+    #"1586"     ADSP AFE Rx/Tx PCM Log
+    #"1587"     Reserved
+    #"1588"     Qmi Supported Interfaces
+    #"1589"     GNSS SAP SDP Events
+    #"158A"     Voice FW Processing Rx/Tx Log
+    #"158B"     Voice FW Stream Rx/Tx Log
+    #"1596"     Reserved
+    #"1599"     GNSS LOC LTE OTDOA PRS RSTD MEAS
+    #"159A"     Reserved
+    #"15A8"     Reserved
+    #"15B1"     GNSS PDSM Best Available Info
+    #"15B2"     GNSS PDSM EXT Status Best Available Info
+    #"15BB"     Reserved
+    #"15BC"     Reserved
+    #"15CB"     IMS VDJ Enqueue
+    #"15CC"     IMS VDJ Dequeue
+    #"15CD"     Reserved
+    #"161A"     DSDA CDMA1x RX 
+    #"161B"     DSDA CDMA1x TX 
+    #"1633"     IMS RTP Feedback
+    #"1634"     Reserved
+    #"1635"     Reserved
+    #"1636"     Reserved
+    #"163D"     Reserved
+    #"163E"     Reserved
+    #"163F"     Reserved
+    #"1643"     MCS QCSI Event Packet
+    #"1647"     Reserved
+    #"1748"     Reserved
+    #"1754"     IRAT List Manager
+    #"1756"     GNSS BDS Measurement Report
+    #"1804"     ADSP Core Voice Driver Stream Tx
+    #"1805"     ADSP Core Voice Driver Stream Rx
+    #"1806"     Reserved
+    #"1807"     Reserved
+    #"180B"     QMI Link 17 RX PDU
+    #"180C"     QMI Link 17 TX PDU
+    #"180D"     QMI Link 18 RX PDU
+    #"180E"     QMI Link 18 TX PDU
+    #"180F"     QMI Link 19 RX PDU
+    #"1810"     QMI Link 19 TX PDU
+    #"1811"     QMI Link 20 RX PDU
+    #"1812"     QMI Link 20 TX PDU
+    #"1830"     IMS VoLTE Session Setup
+    #"1831"     IMS VoLTE Session End
+    #"1832"     IMS Registration
+    #"1833"     Reserved
+    #"1837"     Reserved
+    #"1838"     GNSS ME DPO Status Report Log
+    #"1839"     Reserved
+    #"184C"     LTE RF FED Tx AGC
+    #"184E"     Call Manager Serving System MSIM Event
+    #"184F"     Data Modem IPA Stats
+    #"1850"     Data Modem IPA IP Filter Stats
+    #"1851"     Reserved
+    #"1852"     Reserved
+    #"1853"     Data Modem IPA SIO Config
+    #"1854"     Data Modem IPA WAN Config
+    #"1855"     Data Modem IPA Filter Table Update
+    #"1856"     Data Modem IPA RTNG Table Update
+    #"1867"     Reserved
+    #"1883"     Reserved
+    #"1884"     Reserved
+    #"1885"     Reserved
+    #"1886"     GNSS GAL Measurement Report
+    #"188B"     Reserved
+    #"188C"     Reserved
+    #"188E"     Reserved
+    #"1899"     GNSS Geofence Motion Detection WiFi State
+    #"18A0"     Reserved
+    #"18A1"     GNSS LOC LTE TDP TimeStamped Meas
+    #"18A2"     Reserved
+    #"18A3"     Reserved
+    #"18A4"     Reserved
+    #"18A6"     Reserved
+    #"18A9"     Policy Manager Config Info
+    #"18AA"     Policy Manager Subscription Info
+    #"18AB"     Reserved
+    #"18AC"     GNSS GTS Time Update
+    #"18AD"     Reserved
+    #"18AE"     GNSS Global Time Services Events
+    #"18AF"     Reserved
+    #"18B0"     Reserved
+    #"18B1"     Reserved
+    #"18B2"     Reserved
+    #"18B3"     Reserved
+    #"18B4"     Reserved
+    #"18B5"     Reserved
+    #"18B6"     Reserved
+    #"18BF"     Reserved
+    #"18C5"     Reserved
+    #"18C7"     Reserved
+    #"18C8"     GNSS LocMW ALS IOD Data
+    #"18DA"     GPS LOC PRS FD Buffer
+    #"18DB"     GPS LOC PRS PROG Params
+    #"18DF"     Reserved
+    #"18EB"     GNSS Geofencing ALS IOD Sensor State
+    #"18EC"     Reserved
+    #"18ED"     Reserved
+    #"18EE"     Reserved
+    #"18EF"     Reserved
+    #"18F0"     GNSS Geofence statistics
+    #"18F4"     Reserved
+    #"18F5"     GNSS QZSS SBAS Measurement Report
+    #"18F6"     Reserved
+    #"18F9"     Reserved
+    #"18FA"     GNSS APDR Diag message
+    #"18FD"     Reserved
+    #"1901"     MMGSDI Bootup Message
+    #"1902"     Reserved
+    #"1903"     UIM Powerup Message
+    #"190C"     Network Physical Link Tx 100 Bytes
+    #"190D"     Network Physical Link Rx 100 Bytes
+    #"1916"     Reserved
+    #"191F"     Reserved
+    #"1923"     Unrecognized
+    #"1924"     Unrecognized
+    #"192E"     Reserved
+    #"194F"     iWLAN S2B IKEv2
+    #"1950"     Reserved
+    #"1952"     MAPCON  PDN Policy DataBase
+    #"1953"     Reserved
+    #"1957"     Reserved
+    #"1958"     Reserved
+    #"1959"     QDR DR RAW Sensor Data
+    #"195A"     Reserved
+    #"195B"     QDR NAV Report
+    #"195C"     Reserved
+    #"195D"     Reserved
+    #"195E"     QDR DR NAV State
+    #"195F"     Reserved
+    #"1960"     Reserved
+    #"1961"     Reserved
+    #"1965"     Reserved
+    #"1966"     Reserved
+    #"196E"     Reserved
+    #"197E"     Reserved
+    #"1982"     Reserved
+    #"1983"     Reserved
+    #"1984"     Reserved
+    #"1985"     Reserved
+    #"1986"     Reserved
+    #"1987"     Reserved
+    #"1991"     Call Manager Stats Event
+    #"1992"     SDSR EQPRL Packet
+    #"1993"     Reserved
+    #"1994"     SDSR List Print Packet
+    #"199D"     Reserved
+    #"19A9"     PDR3.0 Technology Event Report
+    #"19AE"     Reserved
+    #"19B7"     UIM APDU
+    #"19BA"     Reserved
+    #"19BB"     Reserved
+    #"19BC"     Reserved
+    #"19BD"     Reserved
+    #"19BE"     Reserved
+    #"19BF"     Reserved
+    #"19C0"     Reserved
+    #"19C3"     Reserved
+    #"19C4"     Reserved
+    #"19CE"     Reserved
+    #"19CF"     GNSS GPS L2 Measurement Report
+    #"19D2"     Reserved
+    #"19D4"     Reserved
+    #"19D5"     Reserved
+    #"19DC"     Reserved
+    #"19DD"     Reserved
+    #"19E4"     Reserved
+    #"19E5"     Reserved
+    #"19EB"     GNSS GPS L5 Measurement Report
+    #"19F0"     Reserved
+    #"19F1"     Reserved
+    #"19F2"     Reserved
+    #"19F3"     Reserved
+    #"19F4"     Reserved
+    #"19F5"     Reserved
+    #"19F6"     Reserved
+    #"19F7"     Reserved
+    #"19F8"     Reserved
+    #"19F9"     Reserved
+    #"19FB"     Reserved
+    #"19FD"     Reserved
+    #"1C4A"     Reserved
+    #"1C4B"     Reserved
+    #"1C4C"     Reserved
+    #"1C4D"     Reserved
+    #"1C4E"     Reserved
+    #"1C4F"     Reserved
+    #"1FEB"     Extended Debug Message,
+);
+
+my $CONDENSE_QMI    = 0;
+my $CONDENSE_QMI_FILTER_1 = '^\s*$|^packetVersion\s*=|^ServiceId\s*=|^MajorRev\s*=|^MinorRev\s*=|^ConHandle\s*=|^MsgId\s*=|^QmiLength\s*=|^\s*\}\s*$';
+my $CONDENSE_QMI_FILTER_2 = '^\s*$|^packetVersion\s*=|^MsgType\s*=|^Counter\s*=|^ServiceId\s*=|^MajorRev\s*=|^MinorRev\s*=|^ConHandle\s*=|^MsgId\s*=|^QmiLength\s*=|^\s*\}\s*$';
+
+my %OPT_FIELD       = (
+    fname   =>  0,
+    linum   =>  0,
+    date    =>  0,
+    time    =>  0,
+    typeid  =>  0,
+    msg     =>  0,
+);
+my %OPT_FIELD_SUBS  = (
+);
+my %OPT_FIELD_DESC  = (
+    fname   =>  "Print origin file name",
+    linum   =>  "Print origin line number",
+    date    =>  "Print date of the message",
+    time    =>  "Print time of the message",
+    typeid  =>  "Print type ID of the messsage",
+    msg     =>  "Print log message content",
+    all     =>  "Print all available fields",
+    default =>  "Print all available fields except fname and linum",
+);
+
+my @INPUT_STREAMS   = (
+    # struct in follow:
+    # {
+    #     "name"  =>  "STDIN",
+    #     "fd"    =>  *STDIN,
+    #     "eof"   =>  0,
+    # },
+);
+my $OUTPUT_STREAM;
+my $OUTPUT_NO_HEADER= 0;
+
+
+sub submit_header {
+    my ($cmd_line) = @_;
+    my $title = sprintf("%*s%*s%*s%s%*s%s%s\n",
+                        $OPT_FIELD{"fname"} ? -15 : 0,
+                        $OPT_FIELD{"fname"} ? "FILE NAME" : 0,
+                        $OPT_FIELD{"linum"} ? -15 : 0,
+                        $OPT_FIELD{"linum"} ? "LINE NUM" : 0,
+                        $OPT_FIELD{"date"} ? 5 : 0,
+                        $OPT_FIELD{"date"} ? "DATE" : "",
+                        $OPT_FIELD{"date"} && $OPT_FIELD{"time"} ? "/" : "",
+                        $OPT_FIELD{"time"} ? -12 : 0,
+                        $OPT_FIELD{"time"} ? "TIME" : "",
+                        $OPT_FIELD{"msg"}  ? "    " : "",
+                        $OPT_FIELD{"msg"}  ? "MESSAGE" : "");
+
+    if(! $OUTPUT_NO_HEADER) {
+        print $OUTPUT_STREAM "=======================FILTERED WITH CMD LINE=======================\n";
+        print $OUTPUT_STREAM "$cmd_line\n";
+        print $OUTPUT_STREAM "====================================================================\n";
+    }
+
+    print $OUTPUT_STREAM "$title";
+    print $OUTPUT_STREAM "--------------------------------------------------------------------\n";
+}
+
+sub submit_line {
+    my ($line) = @_;
+    my $format;
+
+    my $fname       = $OPT_FIELD{fname} ? $line->{fname} : "";
+    my $linum       = "";
+
+    if ($OPT_FIELD{linum}) {
+        $linum  = sprintf("[%s] ", $line->{linum});
+    }
+
+    if ($line->{type} eq "start") {
+        my $timestamp   = sprintf("%s%s%s%s%s%s%s ",
+                                  $OPT_FIELD{date} ? $line->{year} : "",
+                                  $OPT_FIELD{date} ? "/" : "",
+                                  $OPT_FIELD{date} ? $line->{mounth} : "",
+                                  $OPT_FIELD{date} ? "/" : "",
+                                  $OPT_FIELD{date} ? $line->{day} : "",
+                                  ($OPT_FIELD{date} && $OPT_FIELD{time}) ? " " : "",
+                                  $OPT_FIELD{time} ? $line->{time} : "");
+        my $typeid      = "";
+
+        if ($OPT_FIELD{typeid}) {
+            $typeid     = sprintf("%s ", $line->{typeid});
+        }
+
+        $format = sprintf("%s%s%s %s %s\n",
+                          $fname,
+                          $linum,
+                          $timestamp,
+                          $typeid,
+                          $OPT_FIELD{msg} ? $line->{msg} : "");
+
+    } elsif($line->{type} eq "content") {
+        $format = sprintf("%s%s%s\n",
+                          $fname,
+                          $linum,
+                          $OPT_FIELD{msg} ? $line->{msg} : "");
+    } elsif ($line->{type} eq "header") {
+        $format = sprintf("%s%s%s\n",
+                          $fname,
+                          $linum,
+                          $OPT_FIELD{msg} ? $line->{msg} : "");
+    } else {
+        return;
+    }
+
+    print $OUTPUT_STREAM  "$format";
+}
+
+sub submit_block {
+    my ($block) = @_;
+
+    if (defined $block->{header}) {
+        submit_line($block->{header});
+    }
+
+    foreach (@{ $block->{content} }) {
+        submit_line($_);
+    }
+}
+
+sub submit_gen_block {
+    my ($block)   = @_;
+
+    return submit_block($block);
+}
+
+sub do_handle_gen_block {
+    my ($block) = @_;
+
+    if (@FILTER_GEN_CONTENT_TABLE > 0) {
+        foreach my $log (@{ $block->{content} }) {
+            if ($log->{msg}) {
+                foreach (@FILTER_GEN_CONTENT_TABLE) {
+                    if ($log->{msg} =~ $_) {
+                        return submit_gen_block($block);
+                    }
+                }
+            }
+        }
+    } else {
+        return submit_gen_block($block);
+    }
+}
+
+sub do_submit_qmi_block {
+    my ($block)  = @_;
+
+    return submit_block($block);
+}
+
+sub submit_qmi_block {
+    my ($block)  = @_;
+    my @filtered = ();
+
+    if ($CONDENSE_QMI > 0) {
+        foreach my $log (@{ $block->{content} }) {
+            if ($log->{msg}) {
+                if (($CONDENSE_QMI == 1 && $log->{msg} !~ $CONDENSE_QMI_FILTER_1) ||
+                    ($CONDENSE_QMI == 2 && $log->{msg} !~ $CONDENSE_QMI_FILTER_2)) {
+                    $log->{msg} =~ s/\s*\{|\s*\}|_respTlvs\[\d*\]\s*\{|_reqTlvs\[\d*\]\s*\{|_indTlvs\[\d*\]\s*\{//g;
+                    push @filtered, $log;
+                }
+            }
+        }
+
+        # keep qmi block even if contents has no valid info
+        $block->{content} = \@filtered;
+    }
+
+    return do_submit_qmi_block($block);
+}
+
+sub handle_null {
+    # discard everything
+}
+
+sub handle_generic {
+    my ($block) = @_;
+    my $header  = $block->{header};
+
+    if (@FILTER_GEN_TABLE > 0) {
+        foreach (@FILTER_GEN_TABLE) {
+            if ($header->{msg} && $header->{msg} =~ $_) {
+                return do_handle_gen_block($block);
+            }
+        }
+    } else {
+        return do_handle_gen_block($block);
+    }
+}
+
+sub handle_qmi {
+    my ($block) = @_;
+
+    if (@FILTER_QMI_CONTENT_TABLE > 0) {
+        foreach my $log (@{ $block->{content} }) {
+            if ($log->{msg}) {
+                foreach (@FILTER_QMI_CONTENT_TABLE) {
+                    if ($log->{msg} =~ $_) {
+                        return submit_qmi_block($block);
+                    }
+                }
+            }
+        }
+    } else {
+        return submit_qmi_block($block);
+    }
+}
+
+sub do_submit_edm_block {
+    my ($block)   = @_;
+    my @content   = ();
+    my $header    = $block->{header};
+    my $timestamp = sprintf("%s%s%s%s%s%s%s ",
+                            $OPT_FIELD{date} ? $header->{year} : "",
+                            $OPT_FIELD{date} ? "/" : "",
+                            $OPT_FIELD{date} ? $header->{mounth} : "",
+                            $OPT_FIELD{date} ? "/" : "",
+                            $OPT_FIELD{date} ? $header->{day} : "",
+                            ($OPT_FIELD{date} && $OPT_FIELD{time}) ? " " : "",
+                            $OPT_FIELD{time} ? $header->{time} : "");
+
+    # don't output header for this message
+    undef $block->{header};
+
+    # reformat each content line
+    foreach my $log (@{ $block->{content} }) {
+        my ($_fname, $_level, $_content) = (
+            $log->{msg} =~ /^\s*([^\s]+)\s+\d+\s+([^\s]+)\s+(.*)/
+        );
+        my $msg     = $log->{msg};
+
+        if (defined $_fname) {
+            $msg    = sprintf("[%s][%s] %s", $_level, $_fname, $_content);
+        }
+
+        $log->{msg} = sprintf("%s%s", $timestamp, $msg);
+    }
+
+    return submit_block($block);
+}
+
+sub submit_edm_block {
+    my ($block)   = @_;
+    my @filtered  = ();
+
+    if (@FILTER_EDM_DISCARD_TABLE > 0) {
+        if (@{ $block->{content} } > 0) {
+            foreach my $log (@{ $block->{content} }) {
+                if ($log->{msg}) {
+                    foreach (@FILTER_EDM_DISCARD_TABLE) {
+                        if($log->{msg} !~ $_) {
+                            push @filtered, $log;
+                        }
+                    }
+                }
+            }
+        }
+
+        if (@filtered > 0) {
+            $block->{content} = \@filtered;
+            return do_submit_edm_block($block);
+        }
+    } else {
+        return do_submit_edm_block($block);
+    }
+}
+
+sub handle_extended_debug_message {
+    my ($block) = @_;
+
+    if (@FILTER_EDM_CONTENT_TABLE > 0) {
+        foreach my $log (@{ $block->{content} }) {
+            if ($log->{msg}) {
+                foreach (@FILTER_EDM_CONTENT_TABLE) {
+                    if ($log->{msg} =~ $_) {
+                        return submit_edm_block($block);
+                    }
+                }
+            }
+        }
+    } else {
+        return submit_edm_block($block);
+    }
+}
+
+sub handle_header {
+    my ($block) = @_;
+
+    return submit_block($block);
+}
+
+sub handle_block {
+    my ($block) = @_;
+
+    if ($block->{header}) {
+        my $log = $block->{header};
+        if ($log->{type} eq "start") {
+            if (exists $MESSAGE_HANDLE_TABLE{$log->{typeid}}) {
+                return $MESSAGE_HANDLE_TABLE{$log->{typeid}}($block);
+            }
+
+            if (exists $MESSAGE_HANDLE_TABLE{default}) {
+                return $MESSAGE_HANDLE_TABLE{default}($block);
+            }
+
+            # discard messages without handler
+            return;
+        }
+
+        if ($log->{type} eq "header" ) {
+            return handle_header($block);
+        }
+
+        print STDERR "Unexpected log block of type \"" . $log->{type} . "\"!\n";
+    }
+}
+
+my %MESSAGE_BLOCK = (
+    # header    => BLOCK_HEADER
+    # content   => [ LINES, .. ]
+);
+
+sub filter_log {
+    my ($_log) = @_;
+    my %log = %$_log if (defined $_log);
+
+    if ($log{type} eq "start") {
+        handle_block(\%MESSAGE_BLOCK);
+        %MESSAGE_BLOCK = ();
+        $MESSAGE_BLOCK{header} = \%log;
+    }elsif ($log{type} eq "content") {
+        push @{ $MESSAGE_BLOCK{content} }, \%log;
+    } elsif ($log{type} eq "end") {
+        handle_block(\%MESSAGE_BLOCK);
+        %MESSAGE_BLOCK = ();
+    }elsif ($log{type} eq "header") {
+        handle_block({ header => \%log });
+        %MESSAGE_BLOCK = ();
+    }else {
+        print STDERR "unexpected log type \"" . $log{type} . "\"!";
+    }
+}
+
+## Sample log format
+#
+# %MOBILE PARSED MESSAGE FILE
+# %QCAT VERSION   : QCAT 06.30.76 patch 02
+# %SILK VERSION   : SILK_9.83
+# %LOG FILE NAME  : Z:\work\909\mdlog\diag_log_20190409_1912401554808360242.qmdl
+
+# 2019 Apr  9  11:12:39.346  [79]  0x1FFC  Annotation
+# 	Qualcomm Memory-Device Log converted by QCAT
+# 2019 Apr  9  11:12:39.346  [79]  0x1FF0  Diagnostic Response Status  --  PARAMS/Ext Mobile Id Response
+# Cmd Code: Subsystem Dispatcher Response (75)
+# Subsys ID: PARAMS (50)
+# Subsys Cmd Code: Ext Mobile Id Response (6)
+# Version = 2
+# Pad = 0
+# Chip Family = 0
+# Chip ID = SDM710
+
+# 2019 Apr  9  11:12:41.770  [00]  0x1FEB  Extended Debug Message
+# 	DiagLogger.cpp	88	L	[qcril_qmi_nas] RIL[1][qcril_qmi_nas.cpp: 31430] [DispatcherModul(1064,1185)] qcril_qmi_nas_is_considered_registered: < qcril_qmi_nas_is_considered_reg
+# istered: function exit with ret 1
+ 
+# 	Drop count = 0
+
+# 2019 Apr  9  11:12:41.747  [C0]  0x1544  QMI_MCS_QCSI_PKT
+# packetVersion = 2
+# MsgType = Indication
+# ... ...
+#    }
+# }
+
+sub log_dissect {
+    my ($fname, $linum, $line) = @_;
+
+    if($line =~ /^$/) {
+        return (type => "end");
+    }
+
+    my ($_year, $_mounth, $_day, $_time, $_typeid, $_msg) = (
+          $line =~ /^\s*(\d+)\s+([A-Za-z]+)\s+(\d+)\s+(\d+:\d+:\d+\.\d+)\s+\[[A-Fa-f0-9]+\]\s+0x([A-Fa-f0-9]+)\s+(.*)$/
+    );
+
+    if(defined $_year) {
+        return (type    =>  "start",
+                fname   =>  $fname,
+                linum   =>  $linum,
+                year    =>  $_year,
+                mounth  =>  $_mounth,
+                day     =>  $_day,
+                time    =>  $_time,
+                typeid  =>  $_typeid,
+                msg     =>  $_msg);
+    }
+
+    if($line =~ /^%.*$/) {
+        return (type    =>  "header",
+                fname   =>  $fname,
+                linum   =>  $linum,
+                msg     =>  $line);
+    }
+
+    return (type    =>  "content",
+            fname   =>  $fname,
+            linum   =>  $linum,
+            msg     =>  $line);
+}
+
+sub on_opt_filter_enable {
+    my ($name, $value) = @_;
+    my @filters        = split /,/,$value;
+
+    foreach (@filters) {
+        if (! exists $FILTER_MANIFEST{$_}) {
+            print STDERR "Unsupported filter \"$_\"!\n";
+            exit -1;
+        }
+
+        my $desc        = $FILTER_MANIFEST{$_};
+        my @typeids     = split /,/,$desc->{typeid};
+
+        if (@typeids > 0) {
+            foreach my $id (@typeids) {
+                $MESSAGE_HANDLE_TABLE{$id}  = $desc->{handle};
+            }
+        }
+    }
+}
+
+sub on_opt_filter_list {
+    print "Supported tag handlers:\n";
+    foreach (keys %FILTER_MANIFEST) {
+        print sprintf("  %-15s: %s\n", $_, $FILTER_MANIFEST{$_}->{desc});
+    }
+    exit 0;
+}
+
+sub on_opt_gen_filter {
+    my ($name, $value) = @_;
+
+    push @FILTER_GEN_TABLE, $value;
+}
+
+sub on_opt_gen_content_filter {
+    my ($name, $value) = @_;
+
+    push @FILTER_GEN_CONTENT_TABLE, $value;
+}
+
+sub on_opt_edm_content_filter {
+    my ($name, $value) = @_;
+
+    push @FILTER_EDM_CONTENT_TABLE, $value;
+}
+
+sub on_opt_qmi_content_filter {
+    my ($name, $value) = @_;
+
+    push @FILTER_QMI_CONTENT_TABLE, $value;
+}
+
+sub on_opt_out {
+    my ($name, $value) = @_;
+
+    if(! open($OUTPUT_STREAM, '>', $value)) {
+        print STDERR "ERROR: failed to open \"$value\" to write, abort!\n";
+        exit -1;
+    }
+}
+
+sub on_opt_field {
+    my ($name, $value) = @_;
+    my @fields = split /,/,$value;
+
+    for my $f (@fields) {
+        if($f eq "all") {
+            foreach my $k (keys %OPT_FIELD) {
+                $OPT_FIELD{$k} = 1;
+            }
+            next;
+        }
+
+        if($f eq "default") {
+            foreach my $k (keys %OPT_FIELD) {
+                if($k eq "fname" || $k eq "linum") {
+                    next;
+                }
+                $OPT_FIELD{$k} = 1;
+            }
+            next;
+        }
+
+        if(! exists $OPT_FIELD{$f}) {
+            print STDERR "ERROR: Unspported field specification \"$f\", abort!\n";
+            exit -1;
+        }
+
+        $OPT_FIELD{$f} = 1;
+    }
+}
+
+sub on_opt_field_list {
+    print "Supported field list:\n";
+    foreach (keys %OPT_FIELD_DESC) {
+        print sprintf("  %-15s: %s\n", $_, $OPT_FIELD_DESC{$_});
+    }
+    exit 0;
+}
+
+sub on_opt_args {
+    my ($name, $value) = @_;
+    my $input;
+
+    if(! open($input, '<', $name)) {
+        print STDERR "ERROR: Unable to open \"$name\" to read, abort!\n";
+        exit -1;
+    }
+
+    for my $in (@INPUT_STREAMS) {
+        if($in->{"name"} eq $name) {
+            return;
+        }
+    }
+
+    push @INPUT_STREAMS, {
+        "eof"   =>  0,
+        "fd"    =>  $input,
+        "name"  =>  $name,
+    };
+}
+
+sub on_opt_version {
+    my ($name, $value) = @_;
+
+    print "$FindBin::Script $VERSION\n";
+    exit 0;
+}
+
+sub handle_sig {
+    print STDERR "Terminate on $!, cleanup!\n";
+    exit 0;
+}
+
+
+sub main {
+    my $OPT_CONDENSE_QMI= 0;
+    my $OPT_NO_HEADER   = 0;
+    my $OPT_HELP        = "";
+    my $OPT_MAN         = "";
+    my $CMD_LINE        = $FindBin::Script;
+
+    foreach (@ARGV) {
+        if($CMD_LINE) {
+            $CMD_LINE .= " ";
+        }
+
+        $CMD_LINE .= "\'"  if($_ !~ /-.*/);
+        $CMD_LINE .= $_;
+        $CMD_LINE .= "\'"  if($_ !~ /-.*/);;
+    }
+
+    GetOptions("filter-enable=s"        =>  \&on_opt_filter_enable,
+               "filter-list"            =>  \&on_opt_filter_list,
+               "gen-filter=s@"          =>  \&on_opt_gen_filter,
+               "gen-content-filter=s@"  =>  \&on_opt_gen_content_filter,
+               "edm-content-filter=s@"  =>  \&on_opt_edm_content_filter,
+               "qmi-content-filter=s@"  =>  \&on_opt_qmi_content_filter,
+               "out=s"                  =>  \&on_opt_out,
+               "field=s"                =>  \&on_opt_field,
+               "field-list"             =>  \&on_opt_field_list,
+               "<>"                     =>  \&on_opt_args,
+               "version"                =>  \&on_opt_version,
+               "condense-qmi=i"         =>  \$OPT_CONDENSE_QMI,
+               "no-header"              =>  \$OPT_NO_HEADER,
+               "help"                   =>  \$OPT_HELP,
+               "man"                    =>  \$OPT_MAN)
+        or
+        pod2usage(-verbose => 1);
+
+    pod2usage(-verbose => 1) if $OPT_HELP;
+    pod2usage(-verbose => 2) if $OPT_MAN;
+
+    if($OPT_NO_HEADER) {
+        $OUTPUT_NO_HEADER = 1;
+    }
+
+    if($OPT_CONDENSE_QMI
+       && $OPT_CONDENSE_QMI != 0
+       && $OPT_CONDENSE_QMI != 1
+       && $OPT_CONDENSE_QMI != 2) {
+        print STDERR "ERROR:Error level of condensing qmi \"$OPT_CONDENSE_QMI\", abort!\n";
+        exit -1;
+    }
+
+    $CONDENSE_QMI = $OPT_CONDENSE_QMI;
+
+    if(@INPUT_STREAMS == 0) {
+        push @INPUT_STREAMS, {                          
+            "name"  =>  "STDIN",
+            "fd"    =>  *STDIN,
+            "eof"   =>  0,
+        };
+    }
+
+    if(! defined $OUTPUT_STREAM) {
+        $OUTPUT_STREAM = *STDOUT;
+    }
+
+    submit_header($CMD_LINE);
+
+    foreach my $in (@INPUT_STREAMS) {
+        my $fd = $in->{"fd"};
+        my $handled;
+        my %log;
+
+        while(<$fd>) {
+            last if(! $_);
+
+            chomp;
+            %log = log_dissect($in->{"name"}, $., $_);
+
+            filter_log(\%log);
+        }
+    }
+
+    return 0;
+}
+
+exit main();
