@@ -906,8 +906,8 @@ my %MESSAGE_HANDLE_TABLE    = (
 );
 
 my $CONDENSE_QMI    = 0;
-my $CONDENSE_QMI_FILTER_1 = '^\s*$|^packetVersion\s*=|^ServiceId\s*=|^MajorRev\s*=|^MinorRev\s*=|^ConHandle\s*=|^MsgId\s*=|^QmiLength\s*=|^\s*\}\s*$';
-my $CONDENSE_QMI_FILTER_2 = '^\s*$|^packetVersion\s*=|^MsgType\s*=|^Counter\s*=|^ServiceId\s*=|^MajorRev\s*=|^MinorRev\s*=|^ConHandle\s*=|^MsgId\s*=|^QmiLength\s*=|^\s*\}\s*$';
+my $CONDENSE_QMI_FILTER_1 = '^\s*$|^packetVersion\s*=|^ServiceId\s*=|^MajorRev\s*=|^MinorRev\s*=|^ConHandle\s*=|^MsgId\s*=|^QmiLength\s*=|^IFType\s*=|^QmiCtlFlags\s*=|^QmiType\s*=|^\s*\}\s*$';
+my $CONDENSE_QMI_FILTER_2 = '^\s*$|^packetVersion\s*=|^MsgType\s*=|^Counter\s*=|^ServiceId\s*=|^MajorRev\s*=|^MinorRev\s*=|^ConHandle\s*=|^MsgId\s*=|^QmiLength\s*=|^IFType\s*=|^QmiCtlFlags\s*=|^QmiType\s*=|^\s*\}\s*$';
 
 my %OPT_FIELD       = (
     fname   =>  0,
