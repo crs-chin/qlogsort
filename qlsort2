@@ -484,7 +484,7 @@ sub queue_find_pos {
     use integer;
     while($h > $l) {
         $pos = ($h + $l) / 2;
-        if(cmp_block($block, $OUTPUT_QUEUE[$pos]) <= 0) {
+        if(cmp_block($block, $OUTPUT_QUEUE[$pos]) < 0) {
             $h = $pos;
         } else {
             $l = $pos + 1;
