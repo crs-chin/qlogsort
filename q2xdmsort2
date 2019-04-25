@@ -49,7 +49,6 @@ exit $?
 use strict;
 use warnings;
 use FindBin;
-use File::Temp qw/ tempfile /;
 use Getopt::Long;
 use Pod::Usage;
 
@@ -109,6 +108,10 @@ Specify the field list to print in the final output file
 
 List available field, use "all" to enable all fields output, use
 "default" to enable all fields except finame and linum
+
+=item B<-no-progress>
+
+Don't show progress if file handling
 
 =item B<-condense-qmi=[0|1|2]>
 
@@ -1139,10 +1142,13 @@ sub do_submit_edm_block {
         my ($_fname, $_level, $_content) = (
             $log->{msg} =~ /^\s*([^\s]+)\s+\d+\s+([^\s]+)\s+(.*)/
         );
-        my $msg     = $log->{msg};
+        my $msg     = "";
 
         if (defined $_fname) {
             $msg    = sprintf("[%s][%s] %s", $_level, $_fname, $_content);
+        } else {
+            $log->{msg} =~ s/^\s+//;
+            $msg = $log->{msg};
         }
 
         $log->{msg} = sprintf("%s%s", $timestamp, $msg);
@@ -1431,15 +1437,15 @@ sub on_opt_args {
     }
 
     for my $in (@INPUT_STREAMS) {
-        if($in->{"name"} eq $name) {
+        if($in->{name} eq $name) {
             return;
         }
     }
 
     push @INPUT_STREAMS, {
-        "eof"   =>  0,
-        "fd"    =>  $input,
-        "name"  =>  $name,
+        eof     =>  0,
+        fd      =>  $input,
+        name    =>  $name,
     };
 }
 
@@ -1457,6 +1463,7 @@ sub handle_sig {
 
 
 sub main {
+    my $OPT_NO_PROGRESS = 0;
     my $OPT_CONDENSE_QMI= 0;
     my $OPT_NO_HEADER   = 0;
     my $OPT_HELP        = "";
@@ -1484,6 +1491,7 @@ sub main {
                "field-list"             =>  \&on_opt_field_list,
                "<>"                     =>  \&on_opt_args,
                "version"                =>  \&on_opt_version,
+               "no-progress"            =>  \$OPT_NO_PROGRESS,
                "condense-qmi=i"         =>  \$OPT_CONDENSE_QMI,
                "no-header"              =>  \$OPT_NO_HEADER,
                "help"                   =>  \$OPT_HELP,
@@ -1517,16 +1525,30 @@ sub main {
     }
 
     if(! defined $OUTPUT_STREAM) {
+        $OPT_NO_PROGRESS  = 1;
+
         $OUTPUT_STREAM = *STDOUT;
     }
 
     submit_header($CMD_LINE);
 
+    use integer;
     foreach my $in (@INPUT_STREAMS) {
-        my $fd = $in->{"fd"};
-        my $handled;
+        my $fd      = $in->{fd};
+        my $total   = 0;
+        my $step    = 0;
+        my $progress= 0;
         my %log;
 
+        if (! $OPT_NO_PROGRESS) {
+            $total++ while(<$fd>);
+            seek($fd, 0, 0);
+
+            $progress = -1;
+            $step = $total / 100;
+        }
+
+        $. = 0;
         while(<$fd>) {
             last if(! $_);
 
@@ -1534,6 +1556,16 @@ sub main {
             %log = log_dissect($in->{"name"}, $., $_);
 
             filter_log(\%log);
+
+            if (! $OPT_NO_PROGRESS && ! ($. % $step)) {
+                $progress = $. * 100 / $total;
+                print $in->{name} . " " . $progress . "%\r";
+                STDOUT->flush();
+            }
+        }
+
+        if (! $OPT_NO_PROGRESS) {
+            print $in->{name} . " 100%\n";
         }
     }
 
