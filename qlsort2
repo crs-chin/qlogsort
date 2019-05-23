@@ -318,7 +318,6 @@ my %OPT_COLOR_TABLE = (
 
 my $OPT_COLOR   = $COLOR_OPT_OFF;
 
-my $COLOR_RESET="\e[0;0m";
 my %STYLE_TABLE = (
     normal  => 0,
     bold    => 1,
@@ -343,13 +342,18 @@ my @AUTO_STYLE_LIST = (
     "normal","bold",
 );
 my @AUTO_COLOR_LIST = (
-    "gray","red","green","yellow","blue","violet","cyan","white",
+    "gray","green","yellow","blue","cyan","white", # reserve violet
+                                                   # for QMI, and red
+                                                   # for else
 );
 
 my @AUTO_COLOR_SET = ();
 
 my %COLOR_STYLE_TABLE = ();
 
+my $COLOR_RESET = "\e[0;0m";
+my $COLOR_QMI   = "\e[$STYLE_TABLE{bold};3$COLOR_TABLE{violet}m";
+my $COLOR_TIMESTAMP = "\e[$STYLE_TABLE{invert};3$COLOR_TABLE{green}m";
 
 my @INPUT_STREAMS   = (
     # struct in follow:
@@ -401,15 +405,11 @@ sub submit_header {
 sub do_submit_line {
     my ($line) = @_;
     my $format;
-    my $color = $line->{"color"};
-    my $reset = $COLOR_RESET;
-
-    if($color eq "") {
-        $reset = "";
-    }
 
     if($line->{"type"} eq "log") {
-        $format = sprintf("%s%s%s%s%s %*s%s%*s %s %s %s\n",
+        my $color = $line->{"color"};
+
+        $format = sprintf("%s%s$COLOR_TIMESTAMP%s%s%s$COLOR_RESET %*s%s%*s %s %s $color%s$COLOR_RESET\n",
                           $OPT_FIELD{"fname"} ? $line->{"fname"} . ":" : "",
                           $OPT_FIELD{"linum"} ? "[" . $line->{"linum"} . "] " : "",
                           $OPT_FIELD{"date"} ? $line->{"date"} : "",
@@ -422,10 +422,10 @@ sub do_submit_line {
                           $OPT_FIELD{"tid"} ? $line->{"tid"} : "",
                           $OPT_FIELD{"level"} ? $line->{"level"} : "",
                           $OPT_FIELD{"tag"} ? $line->{"tag"} : "",
-                          $OPT_FIELD{"message"} ? $color . $line->{"log"} . $reset: "");
+                          $OPT_FIELD{"message"} ? $line->{"log"} : "");
     } elsif($line->{"type"} eq "qmi") {
-        $format = sprintf("|          %s\n",
-                          $OPT_FIELD{"message"} ? $color . $line->{"log"} . $reset : "");
+        $format = sprintf("$COLOR_QMI|          %s$COLOR_RESET\n",
+                          $OPT_FIELD{"message"} ? $line->{"log"} : "");
     } else {
         return;
     }
@@ -1503,12 +1503,22 @@ sub main {
             }
         }
 
+        my $idx = 0;
         foreach (keys %TAG_HANDLER_CONFIG_TABLE) {
-            my $hash = substr(md5($_), 0, 4);
-            my $idx = unpack('L', $hash) % @AUTO_COLOR_SET;
+            # my $hash = substr(md5($_), 0, 4);
+            # my $idx = unpack('L', $hash) % @AUTO_COLOR_SET;
 
-            $COLOR_STYLE_TABLE{$_} = $AUTO_COLOR_SET[$idx];
+            if($idx >= @AUTO_COLOR_SET) {
+                $idx = 0;
+            }
+
+            $COLOR_STYLE_TABLE{$_} = $AUTO_COLOR_SET[$idx++];
+            print "TAG COLOR: $COLOR_STYLE_TABLE{$_}$_$COLOR_RESET\n";
         }
+    } else {
+        $COLOR_RESET = "";
+        $COLOR_QMI   = "";
+        $COLOR_TIMESTAMP = "";
     }
 
     if($OPT_SORT) {
