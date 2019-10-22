@@ -21,6 +21,8 @@
 QCAT_BIN=$(type -p QCAT);
 QCAT_MODULE_PATH="/Applications/QCAT/QCAT/Script";
 
+OPT_COLOR="";
+
 if [ -n "$QCAT_BIN" ]; then
     QCAT_MODULE_PATH=$(realpath $(dirname $QCAT_BIN)/../Script/)
 fi
@@ -30,7 +32,11 @@ if ! type -p perl > /dev/null;then
     exit -1;
 fi
 
-perl -I "$QCAT_MODULE_PATH" -x $0 "$@"
+if [ ! -t 1 ];then
+    OPT_COLOR="-color=off";
+fi
+
+perl -I "$QCAT_MODULE_PATH" -x $0 "$@" $OPT_COLOR
 exit $?
 
 #!/usr/bin/perl
@@ -63,6 +69,7 @@ use FindBin;
 use File::Temp qw/ tempfile /;
 use Getopt::Long;
 use Pod::Usage;
+use Digest::MD5 qw(md5);
 
 use QCATDBus;
 
@@ -145,6 +152,10 @@ the matching REGEX will be replaced with the next pattern specified by
 
 List available field, use "all" to enable all fields output, use
 "default" to enable all fields except finame and linum
+
+=item B<-color=[off|auto]>
+
+Turn off(default) or colorize message body automatically
 
 =item B<-dissect-qmi>
 
@@ -294,6 +305,52 @@ my %OPT_FIELD_DESC  = (
     default =>  "Print all available fields except fname and linum",
 );
 
+# make it simpler than ANSIColor package
+my $COLOR_OPT_OFF   = 0;
+my $COLOR_OPT_ON    = 1;
+my $COLOR_OPT_AUTO  = 2;
+
+my %OPT_COLOR_TABLE = (
+    "off"   => $COLOR_OPT_OFF,
+    "on"    => $COLOR_OPT_ON,
+    "auto"  => $COLOR_OPT_AUTO,
+);
+
+my $OPT_COLOR   = $COLOR_OPT_OFF;
+
+my $COLOR_RESET="\e[0;0m";
+my %STYLE_TABLE = (
+    normal  => 0,
+    bold    => 1,
+    dim     => 2,
+    underline => 4,
+    invert  => 7,
+    hide    => 8,
+    delete  => 9,
+);
+my %COLOR_TABLE = (
+    gray    => 0,
+    red     => 1,
+    green   => 2,
+    yellow  => 3,
+    blue    => 4,
+    violet  => 5,
+    cyan    => 6,
+    white   => 7,
+);
+
+my @AUTO_STYLE_LIST = (
+    "normal","bold",
+);
+my @AUTO_COLOR_LIST = (
+    "gray","red","green","yellow","blue","violet","cyan","white",
+);
+
+my @AUTO_COLOR_SET = ();
+
+my %COLOR_STYLE_TABLE = ();
+
+
 my @INPUT_STREAMS   = (
     # struct in follow:
     # {
@@ -344,6 +401,12 @@ sub submit_header {
 sub do_submit_line {
     my ($line) = @_;
     my $format;
+    my $color = $line->{"color"};
+    my $reset = $COLOR_RESET;
+
+    if($color eq "") {
+        $reset = "";
+    }
 
     if($line->{"type"} eq "log") {
         $format = sprintf("%s%s%s%s%s %*s%s%*s %s %s %s\n",
@@ -359,10 +422,10 @@ sub do_submit_line {
                           $OPT_FIELD{"tid"} ? $line->{"tid"} : "",
                           $OPT_FIELD{"level"} ? $line->{"level"} : "",
                           $OPT_FIELD{"tag"} ? $line->{"tag"} : "",
-                          $OPT_FIELD{"message"} ? $line->{"log"} : "");
+                          $OPT_FIELD{"message"} ? $color . $line->{"log"} . $reset: "");
     } elsif($line->{"type"} eq "qmi") {
         $format = sprintf("|          %s\n",
-                          $OPT_FIELD{"message"} ? $line->{"log"} : "");
+                          $OPT_FIELD{"message"} ? $color . $line->{"log"} . $reset : "");
     } else {
         return;
     }
@@ -1084,6 +1147,7 @@ sub log_dissect {
             tid     =>  $_tid,
             level   =>  $_level,
             tag     =>  $_tag,
+            color   =>  "",
             log     =>  $_log);
 }
 
@@ -1278,6 +1342,17 @@ sub on_opt_field_list {
     exit 0;
 }
 
+sub on_opt_color {
+    my ($name, $value) = @_;
+
+    if(! exists $OPT_COLOR_TABLE{$value}) {
+        print STDERR "ERROR:Unsupported color option specification \"$value\", abort!\n";
+        exit -1;
+    }
+
+    $OPT_COLOR = $OPT_COLOR_TABLE{$value};
+}
+
 sub on_opt_args {
     my ($name, $value) = @_;
     my $input;
@@ -1342,6 +1417,7 @@ sub main {
                "field=s"                =>  \&on_opt_field,
                "field-subs=s@"          =>  \&on_opt_field_subs,
                "field-list"             =>  \&on_opt_field_list,
+               "color=s"                =>  \&on_opt_color,
                "<>"                     =>  \&on_opt_args,
                "version"                =>  \&on_opt_version,
                "dissect-qmi"            =>  \$OPT_DISSECT_QMI,
@@ -1406,6 +1482,35 @@ sub main {
         }
     }
 
+    if($OPT_COLOR != $COLOR_OPT_OFF) {
+        foreach my $color (@AUTO_COLOR_LIST) {
+            foreach(@AUTO_STYLE_LIST) {
+                # get rid of colors not looking good
+                if($color eq "gray" || $color eq "blue") {
+                    if($_ eq "normal" || $_ eq "underline") {
+                        next;
+                    }
+                }
+
+                # my normal color, with which all fields except
+                # message part are printed
+                if($color eq "green" && $_ eq "normal") {
+                    next;
+                }
+
+                push @AUTO_COLOR_SET, "\e[$STYLE_TABLE{$_};3$COLOR_TABLE{$color}m";
+                #print "\e[$STYLE_TABLE{$_};3$COLOR_TABLE{$color}mTHIS IS COLOR_TEST$COLOR_RESET\n";
+            }
+        }
+
+        foreach (keys %TAG_HANDLER_CONFIG_TABLE) {
+            my $hash = substr(md5($_), 0, 4);
+            my $idx = unpack('L', $hash) % @AUTO_COLOR_SET;
+
+            $COLOR_STYLE_TABLE{$_} = $AUTO_COLOR_SET[$idx];
+        }
+    }
+
     if($OPT_SORT) {
         $OUTPUT_SORT = 1;
     }
@@ -1443,6 +1548,10 @@ sub main {
             foreach (keys %TAG_HANDLER_CONFIG_TABLE) {
                 if($_ ne "default" && $log{"tag"} =~ $_) {
                     my $config = $TAG_HANDLER_CONFIG_TABLE{$_};
+
+                    if(exists $COLOR_STYLE_TABLE{$_}) {
+                        $log{"color"} =  $COLOR_STYLE_TABLE{$_};
+                    }
 
                     $config->{"handler"}(\%log, $config);
                     $handled = 1;
