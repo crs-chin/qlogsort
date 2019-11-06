@@ -144,22 +144,10 @@ sub append_dissected_qmi_line {
         return;
     }
 
-    # if($line =~ /(.*)(0[xX][\dA-Fa-f]+)(.*)/) {
-    #     $num =  $2 . sprintf "\[%d\]", hex($2);
-    #     $UI_DISSECT_OUTPUT->insert("end", $1);
-    #     $UI_DISSECT_OUTPUT->insert("end", $num, 'number');
-    #     $UI_DISSECT_OUTPUT->insert("end", $3 . "\n");
-    # } elsif($line =~ /([^\d]*)([\d]+)(.*)/) {
-    #     $num =  $2 . sprintf "\[0x%X\]", $2;
-    #     $UI_DISSECT_OUTPUT->insert("end", $1);
-    #     $UI_DISSECT_OUTPUT->insert("end", $num, 'number');
-    #     $UI_DISSECT_OUTPUT->insert("end", $3 . "\n");
-    # } else {
-        $UI_DISSECT_OUTPUT->insert("end", $line . "\n");
-    # }
+    $UI_DISSECT_OUTPUT->insert("end", $line . "\n");
 }
 
-sub append_dissected_qmi {
+sub append_dissected_qmi_common {
     my ($fd) = @_;
 
     if(! $CONDENSE_QMI) {
@@ -196,7 +184,48 @@ sub append_dissected_qmi {
     }while(<$fd>);
 }
 
-sub do_dissect_qmi_linux {
+sub append_dissected_qmi_win32 {
+    my ($_lines)= @_;
+    my @lines    = @$_lines;
+    my $index;
+
+    # eleminating all \r \n which could result in regex confusion
+    # between windows and unix
+    for($index = 0; $index < @lines; $index++) {
+        $lines[$index] =~ s/\r|\n//g;
+    }
+
+    if(! $CONDENSE_QMI) {
+        for($index = 0; $index < @lines; $index++) {
+            if($_ =~ /0x1544\s*QMI_MCS_QCSI_PKT|0x1391\s*QMI Link/) {
+                next;
+            }
+
+            chomp;
+            append_dissected_qmi_line($lines[$index]);
+        }
+        return;
+    }
+
+    for($index = 0; $index < @lines; $index++) {
+        if($lines[$index] =~ /^.*{\s*/) {
+            last;
+        }
+    }
+
+    for(; $index < @lines; $index++) {
+        if($lines[$index] !~ /^\s*$/) {
+            if($CONDENSE_QMI != 2 ||
+               $lines[$index] !~ /^\s*Type\s*=|^\s*Length\s*=|^\s*resp\s*\{$|^\s*\}$/) {
+                $lines[$index] =~ s/\s*\{|_respTlvs\[\d*\]\s*\{|_reqTlvs\[\d*\]\s*\{|_indTlvs\[\d*\]\s*\{//g;
+                append_dissected_qmi_line($lines[$index]);
+            }
+        }
+    }
+}
+
+
+sub do_dissect_qmi_common {
     my ($packet) = @_;
     my $tmpfs       = "/dev/shm";
 
@@ -235,7 +264,7 @@ sub do_dissect_qmi_linux {
             last;
         }
 
-        append_dissected_qmi($DISSECT_OUTPUT_FILE_HANDLE);
+        append_dissected_qmi_common($DISSECT_OUTPUT_FILE_HANDLE);
 
         close $DISSECT_OUTPUT_FILE_HANDLE;
     }while(0);
@@ -255,9 +284,7 @@ sub do_dissect_qmi_win32 {
         append_dissected_qmi_line($QCAT_APP->{LastError}, 1);
     } else {
         my @lines = split /\n/, $obj->Text();
-        foreach (@lines) {
-            append_dissected_qmi_line($_);
-        }
+        append_dissected_qmi_win32(\@lines);
     }
 }
 
@@ -368,8 +395,10 @@ sub do_dissect_qmi_rec {
         $packet .= pack 'H*',$pdu;
     }
 
+    # actually linux style dissection also aplies to windows, except
+    # performance may not as good
     if($^O eq 'linux') {
-        do_dissect_qmi_linux($packet);
+        do_dissect_qmi_common($packet);
     } elsif ($^O eq 'MSWin32') {
         do_dissect_qmi_win32($packet);
     } else {
